@@ -1,0 +1,11 @@
+.vscode
+
+**__pycache__**
+TODO.md
+**.DS_STORE**
+
+results/
+images/
+.run/
+.coverage
+.test/
