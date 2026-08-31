@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import './LiveDDU.css'
 
 type ConnectionState = 'connecting' | 'waiting' | 'live' | 'stale'
-const CENTER_RPM_SEGMENTS = 54
 
 interface LiveFrame {
   packet_id?: number
@@ -179,23 +178,28 @@ export default function LiveDDU() {
       <span className="connection-message">{message}</span>
       <nav><a href="/">Recorded analysis</a><button onClick={() => document.documentElement.requestFullscreen?.()}>Full screen</button></nav>
     </header>
+    <section className={`speed-rpm-band ${atShift ? 'shift' : ''}`} aria-label={`Speed ${numberOrDash(frame?.speed_kmh)} kilometres per hour`}>
+      <div className="band-scale">{Array.from({ length: 32 }, (_, index) => <i key={index} className={index < Math.ceil(rpmPercent / 3.125) ? 'active' : ''} />)}</div>
+      <div className="band-rpm">{numberOrDash(frame?.rpm)} RPM</div>
+    </section>
     <section className="ddu-grid">
       <aside className="race-card panel">
-        <div className="panel-heading"><span>RACE CONTEXT</span><b>{frame?.in_race ? 'ON TRACK' : 'SESSION'}</b></div>
-        <div className="race-feature"><span>POSITION</span><strong>{finite(frame?.position) && frame.position > 0 ? frame.position : '—'}<small> / {finite(frame?.total_racers) && frame.total_racers > 0 ? frame.total_racers : '—'}</small></strong></div>
+        {/* <div className="panel-heading"><span>RACE CONTEXT</span><b>{frame?.in_race ? 'ON TRACK' : 'SESSION'}</b></div>/ */}
         <div className="race-values">
-          <div><span>LAP</span><strong>{finite(frame?.lap) && frame.lap > 0 ? frame.lap : '—'}<small> / {finite(frame?.total_laps) && frame.total_laps > 0 ? frame.total_laps : '—'}</small></strong></div><div><span>DISTANCE</span><strong>{numberOrDash(frame?.lap_distance_m, 0)} <small>m</small></strong></div>
-          <div className="best-time"><span>BEST LAP</span><strong>{formatLapTime(frame?.best_lap_ms)}</strong></div><div className="current-time"><span>CURRENT LAP</span><strong>{formatLapTime(currentLapMs)}</strong><small>live</small></div>
-          <div className="last-time"><span>LAST LAP</span><strong>{formatLapTime(frame?.last_lap_ms)}</strong></div><div className={`delta ${deltaMs === null ? '' : deltaMs > 0 ? 'behind' : 'ahead'}`}><span>DELTA TO BEST</span><strong>{formatDelta(deltaMs)}<small>s</small></strong></div>
+          <div className="race-stat position"><span>POSITION</span><strong>{finite(frame?.position) && frame.position > 0 ? frame.position : '—'}<small> / {finite(frame?.total_racers) && frame.total_racers > 0 ? frame.total_racers : '—'}</small></strong></div>
+          <div className="race-stat laps"><span>LAPS</span><strong>{finite(frame?.lap) && frame.lap > 0 ? frame.lap : '—'}<small> / {finite(frame?.total_laps) && frame.total_laps > 0 ? frame.total_laps : '—'}</small></strong><em>{numberOrDash(frame?.lap_distance_m, 0)} m</em></div>
+          <div className="current-time lap-time"><strong>{formatLapTime(currentLapMs)}</strong></div>
+          <div className="best-time lap-time"><strong>{formatLapTime(frame?.best_lap_ms)}</strong></div>
+          <div className="last-time lap-time"><strong>{formatLapTime(frame?.last_lap_ms)}</strong></div>
         </div>
       </aside>
       <section className="primary-readout panel">
         <div className="control-composition">
           <PedalBar label="BRAKE" value={frame?.brake_pct} tone="brake" />
           <div className={`gear-rpm ${atShift ? 'shift' : ''}`} aria-label={`RPM ${numberOrDash(frame?.rpm)}`}>
-            <div className="rpm-background" aria-hidden="true">{Array.from({ length: CENTER_RPM_SEGMENTS }, (_, index) => <i key={index} className={index < Math.ceil(rpmPercent / (100 / CENTER_RPM_SEGMENTS)) ? 'active' : ''} />)}</div>
-            <div className={`gear ${rpmBand}`}><span>GEAR</span><strong>{gear}</strong></div>
-            <div className="suggestion"><span>SUGGESTED</span><strong>{finite(frame?.suggested_gear) && frame.suggested_gear > 0 ? frame.suggested_gear : '—'}</strong><small>GT7</small></div>
+            <div className={`gear`}><strong style={{fontSize: '230px', fontWeight:'300', color: "yellow"}}>{gear}</strong></div>
+            <div><strong style={{fontSize: '40px'}}>{numberOrDash(frame?.speed_kmh).split('').map((digit, index) => <i key={`${digit}-${index}`}>{digit}</i>)}</strong><span>KM/H</span></div>
+            <div className="gear-support"><div className="suggestion"><strong style={{fontWeight: 200, fontSize: '65px', color: 'red'}}>{finite(frame?.suggested_gear) && frame.suggested_gear > 0 ? frame.suggested_gear : '—'}</strong></div><div className={`delta ${deltaMs === null ? '' : deltaMs > 0 ? 'behind' : 'ahead'}`}><span>DELTA TO BEST</span><strong>{formatDelta(deltaMs)}<small>s</small></strong></div></div>
           </div>
           <PedalBar label="THROTTLE" value={frame?.throttle_pct} tone="throttle" />
         </div>
@@ -204,7 +208,7 @@ export default function LiveDDU() {
       <aside className="systems-card panel">
         <div className="panel-heading"><span>VEHICLE STATE</span><b>{frame?.paused ? 'PAUSED' : 'LIVE'}</b></div>
         <div className={`fuel ${fuelState}`}><div className="fuel-title"><span>{fuelLabel}</span><strong>{numberOrDash(frame?.fuel_l, 1)} <small>L</small></strong></div><div className="fuel-track"><i style={{ width: `${fuelPercent || 0}%` }} /></div><small>{fuelPercent === null ? 'capacity unavailable' : `${fuelPercent.toFixed(0)}% · ${numberOrDash(frame?.fuel_capacity_l, 1)} L capacity`}</small></div>
-        <section className="systems-tyres"><div className="panel-heading"><span>TYRES</span><b>SURFACE °C</b></div><div className="tyre-car" aria-label="Tyre temperature layout"><Tyre label="FL" temperature={frame?.tyre_temp_fl_c} slip={frame?.tyre_slip_fl} /><div className="car-outline" aria-hidden="true"><i /></div><Tyre label="FR" temperature={frame?.tyre_temp_fr_c} slip={frame?.tyre_slip_fr} /><Tyre label="RL" temperature={frame?.tyre_temp_rl_c} slip={frame?.tyre_slip_rl} /><Tyre label="RR" temperature={frame?.tyre_temp_rr_c} slip={frame?.tyre_slip_rr} /></div><small className="tyre-legend"><i className="cold" />cold <i className="operating" />operating <i className="hot" />hot</small></section>
+        <section className="systems-tyres" style={{marginBottom: '10px'}}><div className="panel-heading"></div><div className="tyre-car" aria-label="Tyre temperature layout"><Tyre label="FL" temperature={frame?.tyre_temp_fl_c} slip={frame?.tyre_slip_fl} /><div className="car-outline" aria-hidden="true"><i /></div><Tyre label="FR" temperature={frame?.tyre_temp_fr_c} slip={frame?.tyre_slip_fr} /><Tyre label="RL" temperature={frame?.tyre_temp_rl_c} slip={frame?.tyre_slip_rl} /><Tyre label="RR" temperature={frame?.tyre_temp_rr_c} slip={frame?.tyre_slip_rr} /></div></section>
         <div className="system-readings">
           <div className="system-reading water"><SystemIcon type="water" /><span>WATER</span><strong>{numberOrDash(frame?.water_temp_c, 0)}<small>°C</small></strong></div>
           <div className="system-reading oil"><SystemIcon type="oil" /><span>OIL</span><strong>{numberOrDash(frame?.oil_temp_c, 0)}<small>°C</small></strong><em>{numberOrDash(frame?.oil_pressure, 1)} pressure</em></div>
@@ -214,11 +218,6 @@ export default function LiveDDU() {
         </div>
       </aside>
     </section>
-    <section className={`speed-rpm-band ${atShift ? 'shift' : ''}`} aria-label={`Speed ${numberOrDash(frame?.speed_kmh)} kilometres per hour`}>
-      <div className="band-scale">{Array.from({ length: 32 }, (_, index) => <i key={index} className={index < Math.ceil(rpmPercent / 3.125) ? 'active' : ''} />)}</div>
-      <div className="speed-led"><strong>{numberOrDash(frame?.speed_kmh).split('').map((digit, index) => <i key={`${digit}-${index}`}>{digit}</i>)}</strong><span>KM/H</span></div>
-      <div className="band-rpm">{numberOrDash(frame?.rpm)} RPM</div>
-    </section>
-    <footer>Raw live GT7 measurements · No live delta or coaching · Slip alerts require measured slip plus driver input</footer>
+    {/* <footer>Raw live GT7 measurements · No live delta or coaching · Slip alerts require measured slip plus driver input</footer> */}
   </main>
 }
