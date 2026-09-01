@@ -60,6 +60,37 @@ def test_hub_is_latest_wins_without_a_packet_backlog():
     assert frame.packet_id == 2
 
 
+def test_hub_aligns_live_delta_to_reference_lap_distance():
+    hub = LiveTelemetryHub()
+    hub.publish(telemetry(current_lap=1, lap_distance=0, received_at=100.0))
+    hub.publish(telemetry(current_lap=1, lap_distance=100, received_at=105.0))
+    hub.publish(telemetry(current_lap=2, lap_distance=0, received_at=110.0))
+    hub.publish(telemetry(current_lap=2, lap_distance=50, received_at=113.0))
+
+    snapshot = hub.snapshot()
+    assert snapshot is not None
+    assert snapshot[1].delta_to_reference_ms == pytest.approx(500.0)
+
+
+def test_hub_does_not_compare_first_lap_with_stale_game_best():
+    hub = LiveTelemetryHub()
+    hub.publish(telemetry(current_lap=1, lap_distance=0, received_at=100.0, best_lap=70000))
+    hub.publish(telemetry(current_lap=2, lap_distance=0, received_at=110.0, last_lap=156000, best_lap=70000))
+    snapshot = hub.snapshot()
+    assert snapshot is not None
+    assert snapshot[1].last_lap_delta_ms is None
+
+
+def test_hub_clears_lap_delta_when_session_restarts():
+    hub = LiveTelemetryHub()
+    hub.publish(telemetry(current_lap=1, lap_distance=0, received_at=100.0))
+    hub.publish(telemetry(current_lap=2, lap_distance=0, received_at=110.0, last_lap=80000))
+    hub.publish(telemetry(current_lap=0, lap_distance=0, received_at=120.0, last_lap=0))
+    snapshot = hub.snapshot()
+    assert snapshot is not None
+    assert snapshot[1].last_lap_delta_ms is None
+
+
 def test_tyre_slip_is_numeric_and_suppressed_near_standstill():
     assert tyre_slip_ratio(110, 100) == pytest.approx(0.1)
     assert tyre_slip_ratio(4, 0.5) is None

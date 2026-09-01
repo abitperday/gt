@@ -82,6 +82,9 @@
 .gear-rpm .delta strong { font: 700 27px/.8 'Barlow Condensed', sans-serif; font-variant-numeric: tabular-nums; }
 .gear-rpm .delta small { margin-left: 3px; color: inherit; font: 700 10px Rajdhani, sans-serif; }
 .gear-rpm .delta.ahead strong { color: #65e7a6; }.gear-rpm .delta.behind strong { color: #ff766b; }.gear-rpm .delta:not(.ahead):not(.behind) strong { color: #bfc9ce; }
+.assist-indicator { min-height: 34px; padding: 5px 6px; border: 1px solid #29343d; border-radius: 3px; background: #0c1116; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; align-items: center; column-gap: 5px; }
+.assist-indicator.abs { grid-column: 1; grid-row: 2; }.assist-indicator.tcs { grid-column: 2; grid-row: 2; }
+.assist-led { grid-column: 1; grid-row: 1 / 3; width: 8px; height: 8px; border-radius: 50%; background: #697780; }.assist-indicator span { grid-column: 2; color: #b8c5cb; font-size: 9px; font-weight: 700; letter-spacing: .1em; }.assist-indicator span small { color: #71808b; font-size: .78em; letter-spacing: .03em; }.assist-indicator strong { grid-column: 2; color: #aebbc2; font-size: 11px; letter-spacing: .06em; }.assist-indicator.active { border-color: #e64b45; }.assist-indicator.active .assist-led { background: #ff554d; box-shadow: 0 0 8px #ff554d; }.assist-indicator.active strong { color: #ff776e; }.assist-indicator.off .assist-led { background: #3eaf6e; }.assist-indicator.off strong { color: #65e7a6; }.assist-indicator.unknown strong { color: #aeb8be; }
 
 /* Water and oil retain their small-card format, with stronger icon/value pairing. */
 .system-reading { min-height: 92px; padding: 10px 9px 8px; grid-template-columns: 1fr auto; grid-template-rows: auto 1fr auto; align-content: stretch; }
@@ -127,6 +130,14 @@
    at both tablet and rotated-phone sizes without spilling into the edge. */
 .race-values .lap-time { container-type: inline-size; }
 .race-values .lap-time strong { max-inline-size: 100%; font-size: clamp(28px, 23cqw, 64px); letter-spacing: -.035em; }
+.lighting-indicator { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; padding: 5px 1px 0; border-top: 1px solid #29343d; color: #90a3ae; }
+.lighting-indicator .light-icon { color: #53616b; font-size: 22px; line-height: .8; }
+.lighting-indicator strong { color: #697680; font: 700 16px/.85 'Barlow Condensed', sans-serif; }
+.lighting-indicator.on .light-icon { color: #ffe07a; text-shadow: 0 0 8px #ffd34d88; }
+.lighting-indicator.on strong { color: #ffe07a; }
+
+/* GT7 live packets do not include sector splits, so each bar states that
+   limitation explicitly instead of implying a best/current comparison. */
 
 /* Landscape prioritises the driving controls, while the race and vehicle
    context panels remain balanced at either side. */
@@ -134,3 +145,27 @@
   .ddu-grid { grid-template-columns: minmax(112px, 1fr) minmax(250px, 2fr) minmax(112px, 1fr); }
   .control-composition { grid-template-columns: minmax(0, 1fr) minmax(0, 3fr) minmax(0, 1fr); }
 }
+.gear-indicators { display: flex; justify-content: center; align-items: center; gap: 7px; padding: 8px 6px 5px; }
+.gear-indicators .lighting-indicator, .gear-indicators .mini-indicator { min-width: 54px; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 5px 7px; border: 1px solid #29343d; border-radius: 4px; background: #0c1116; color: #697680; }
+.gear-indicators .lighting-indicator .light-icon { font-size: 30px; line-height: .8; }
+.gear-indicators .lighting-indicator strong, .gear-indicators .mini-indicator strong { font: 700 10px/.9 'Barlow Condensed', sans-serif; }
+.gear-indicators .lighting-indicator.on { border-color: #ffe07a; box-shadow: 0 0 10px #ffd34d66, inset 0 0 8px #ffd34d22; }
+.gear-indicators .lighting-indicator.on .light-icon, .gear-indicators .lighting-indicator.on strong { color: #ffe07a; text-shadow: 0 0 8px #ffd34d; }
+.gear-indicators .lighting-indicator.blink { animation: headlight-blink .5s linear 1; }
+@keyframes headlight-blink {
+  0%, 16%, 33%, 50%, 66%, 83%, 100% { filter: brightness(1); opacity: 1; }
+  8%, 25%, 41%, 58%, 75%, 91% { filter: brightness(.3); opacity: .5; }
+}
+.gear-indicators .mini-indicator.active { border-color: #e64b45; color: #ff776e; }.gear-indicators .mini-indicator.off { border-color: #32885b; color: #65e7a6; }
+.gear-rpm { grid-template-rows: auto 1fr auto; }
+.gear-indicators .mini-indicator.abs, .gear-indicators .mini-indicator.tcs { color: #697680; border-color: #29343d; }.gear-indicators .mini-indicator.abs.active { color: #ff5b55; border-color: #ff5b55; box-shadow: 0 0 8px #ff4b4588; }.gear-indicators .mini-indicator.tcs.active { color: #66a9ff; border-color: #66a9ff; box-shadow: 0 0 8px #3989ff88; }
+.gear-indicators .mini-indicator { min-width: 64px; min-height: 43px; padding: 2px 5px; }.assist-svg { width: 58px; height: 39px; display: block; }.gear-indicators .mini-indicator.abs.active { box-shadow: 0 0 8px #ff4b4588; }
+.gear-indicators > div { width: 76px; height: 48px; min-width: 76px; min-height: 48px; box-sizing: border-box; }
+.gear-indicators .lighting-indicator { padding: 2px 5px; }.gear-indicators .lighting-indicator .light-icon { width: 58px; height: 39px; display: flex; align-items: center; justify-content: center; font-size: 30px; }
+.headlight-svg { width: 58px; height: 39px; display: block; }
+.ddu-shell { position: relative; }
+.ddu-inactive-overlay { position: absolute; z-index: 20; inset: 0; display: grid; place-items: center; border-radius: 6px; background: #070b0ed9; backdrop-filter: blur(7px); }
+.ddu-inactive-overlay > div { display: grid; justify-items: center; gap: 8px; padding: 28px 42px; border: 1px solid #394650; border-radius: 6px; background: #0d141aee; box-shadow: 0 0 30px #00000088, inset 0 0 20px #ffffff08; text-align: center; }
+.inactive-icon { color: #667681; font-size: 42px; line-height: .8; }.ddu-inactive-overlay strong { color: #e9f0f3; font: 700 clamp(18px, 2.4vw, 30px)/1 'Technology', 'Barlow Condensed', sans-serif; letter-spacing: .12em; }.ddu-inactive-overlay small { max-width: 520px; color: #8696a1; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-align: center; }
+.pedal-track i { height: 100%; transform-origin: center bottom; transition: transform 50ms linear; will-change: transform; contain: strict; }
+.band-scale { contain: layout paint; }

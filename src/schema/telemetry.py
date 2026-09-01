@@ -52,6 +52,9 @@ class TelemetryStat(BaseModel):
     # Fields below are additive so historical JSON fixtures and persisted CSVs remain valid.
     received_at: float = 0.0
     is_paused: bool = False
+    lights_active: bool = False
+    high_beams: bool = False
+    low_beams: bool = False
     fuel_current: float | None = None
     fuel_capacity: float | None = None
     boost: float | None = None
@@ -231,9 +234,12 @@ class TelemetryStat(BaseModel):
             0
         ]  # angular velocity Z
 
-        flags = struct.unpack("B", ddata[0x8E : 0x8E + 1])[0]
+        flags = struct.unpack("<H", ddata[0x8E : 0x8E + 2])[0]
         is_paused = bool(flags & 0b10)
         in_race = bool(flags & 0b1)
+        lights_active = bool(flags & (1 << 7))
+        high_beams = bool(flags & (1 << 8))
+        low_beams = bool(flags & (1 << 9))
 
         lap_distance = (
             0
@@ -272,6 +278,9 @@ class TelemetryStat(BaseModel):
             car_id=int(car_id),
             received_at=time.time(),
             is_paused=is_paused,
+            lights_active=lights_active,
+            high_beams=high_beams,
+            low_beams=low_beams,
             fuel_current=current_fuel,
             fuel_capacity=fuel_capacity,
             boost=boost,
