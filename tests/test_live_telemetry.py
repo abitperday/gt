@@ -39,13 +39,30 @@ def telemetry(**overrides) -> TelemetryStat:
 
 
 def test_live_frame_serializes_browser_facing_units_and_optional_values():
-    frame = LiveFrame.from_telemetry(telemetry())
+    frame = LiveFrame.from_telemetry(telemetry(x=123.5, y=-88.25, z=7.5))
 
     assert frame.packet_id == 42
     assert frame.speed_kmh == 181
     assert frame.fuel_l == 25.0
     assert frame.best_lap_ms == 81234
     assert frame.tyre_slip_rl == 0.2
+    assert frame.position_x == 123.5
+    assert frame.position_y == -88.25
+    assert frame.elevation_m == 7.5
+
+
+def test_hub_retains_a_complete_planar_trace_for_new_dashboard_connections():
+    hub = LiveTelemetryHub()
+    hub.publish(telemetry(current_lap=1, lap_distance=0, x=0, y=0, received_at=100.0))
+    hub.publish(telemetry(current_lap=1, lap_distance=10, x=10, y=0, received_at=101.0))
+    hub.publish(telemetry(current_lap=2, lap_distance=0, x=0, y=0, received_at=102.0))
+
+    snapshot = hub.snapshot()
+    assert snapshot is not None
+    frame = snapshot[1]
+    assert frame.session_id == 1
+    assert frame.track_ready is True
+    assert frame.track_trace == [(0.0, 0.0), (10.0, 0.0)]
 
 
 def test_hub_is_latest_wins_without_a_packet_backlog():

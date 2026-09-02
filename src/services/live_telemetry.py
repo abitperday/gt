@@ -18,6 +18,7 @@ class LiveFrame(BaseModel):
 
     packet_id: int
     captured_at: float
+    session_id: int = 0
     car_id: int
     speed_kmh: int
     gear: int
@@ -36,6 +37,12 @@ class LiveFrame(BaseModel):
     delta_to_reference_ms: float | None
     last_lap_delta_ms: float | None
     lap_distance_m: float
+    position_x: float | None
+    position_y: float | None
+    elevation_m: float | None
+    track_trace: list[tuple[float, float]] | None = None
+    track_recording_lap: int | None = None
+    track_ready: bool = False
     fuel_l: float | None
     fuel_capacity_l: float | None
     boost: float | None
@@ -57,10 +64,21 @@ class LiveFrame(BaseModel):
     low_beams: bool
 
     @classmethod
-    def from_telemetry(cls, event: TelemetryStat, delta_to_reference_ms: float | None = None, last_lap_delta_ms: float | None = None) -> "LiveFrame":
+    def from_telemetry(
+        cls,
+        event: TelemetryStat,
+        delta_to_reference_ms: float | None = None,
+        last_lap_delta_ms: float | None = None,
+        *,
+        session_id: int = 0,
+        track_trace: list[tuple[float, float]] | None = None,
+        track_recording_lap: int | None = None,
+        track_ready: bool = False,
+    ) -> "LiveFrame":
         return cls(
             packet_id=event.package_id,
             captured_at=event.received_at or time.time(),
+            session_id=session_id,
             car_id=event.car_id,
             speed_kmh=max(0, event.speed),
             gear=event.current_gear,
@@ -79,6 +97,13 @@ class LiveFrame(BaseModel):
             delta_to_reference_ms=delta_to_reference_ms,
             last_lap_delta_ms=last_lap_delta_ms,
             lap_distance_m=float(_finite(event.lap_distance) or 0),
+            position_x=_finite(event.x),
+            # TelemetryStat normalizes the GT7 packet to x/east, y/north, z/up.
+            position_y=_finite(event.y),
+            elevation_m=_finite(event.z),
+            track_trace=track_trace,
+            track_recording_lap=track_recording_lap,
+            track_ready=track_ready,
             fuel_l=_finite(event.fuel_current),
             fuel_capacity_l=_finite(event.fuel_capacity),
             boost=_finite(event.boost),
@@ -104,6 +129,10 @@ class LiveFrame(BaseModel):
 class LiveTelemetryHub:
     """Thread-safe latest-frame broadcaster with no per-client backlog."""
 
+    _TRACK_SAMPLE_DISTANCE_M = 2.0
+    _TRACK_MAX_POINTS = 3_000
+    _TRACK_SNAPSHOT_INTERVAL_S = 2.0
+
     def __init__(self):
         self._condition = threading.Condition()
         self._latest: LiveFrame | None = None
@@ -116,6 +145,84 @@ class LiveTelemetryHub:
         self._reference_lap_time: float | None = None
         self._best_lap_seen: int | None = None
         self._last_lap_delta_ms: float | None = None
+        self._session_id = 0
+        self._session_active = False
+        self._track_points: list[tuple[float, float]] = []
+        self._track_recording_lap: int | None = None
+        self._track_ready = False
+        self._track_last_lap: int | None = None
+        self._track_sample_distance_m = self._TRACK_SAMPLE_DISTANCE_M
+        self._track_last_snapshot_at = 0.0
+        self._track_force_snapshot = False
+
+    def _reset_track(self) -> None:
+        self._track_points = []
+        self._track_recording_lap = None
+        self._track_ready = False
+        self._track_last_lap = None
+        self._track_sample_distance_m = self._TRACK_SAMPLE_DISTANCE_M
+        self._track_force_snapshot = True
+
+    def _append_track_point(self, event: TelemetryStat) -> None:
+        x = _finite(event.x)
+        y = _finite(event.y)
+        if x is None or y is None:
+            return
+        point = (float(x), float(y))
+        previous = self._track_points[-1] if self._track_points else None
+        if previous is not None and math.hypot(point[0] - previous[0], point[1] - previous[1]) < self._track_sample_distance_m:
+            return
+        self._track_points.append(point)
+        # Preserve a complete long-circuit outline without sending an unbounded SVG path.
+        if len(self._track_points) > self._TRACK_MAX_POINTS:
+            self._track_points = self._track_points[::2]
+            self._track_sample_distance_m *= 2
+
+    def _update_track(self, event: TelemetryStat) -> None:
+        active = event.in_race and event.current_lap > 0
+        if not active:
+            if self._session_active:
+                self._session_active = False
+                self._reset_track()
+            return
+
+        restarted = self._track_last_lap is not None and event.current_lap < self._track_last_lap
+        if not self._session_active or restarted:
+            self._session_active = True
+            self._session_id += 1
+            self._reset_track()
+            # If the hub joins in the middle of a lap, wait for the next lap boundary
+            # so a partial first segment is never presented as a circuit.
+            if event.lap_distance <= self._TRACK_SAMPLE_DISTANCE_M:
+                self._track_recording_lap = event.current_lap
+
+        previous_lap = self._track_last_lap
+        if self._track_recording_lap is None and previous_lap is not None and event.current_lap > previous_lap:
+            self._track_recording_lap = event.current_lap
+            self._track_force_snapshot = True
+
+        if self._track_recording_lap is not None and not self._track_ready:
+            if event.current_lap == self._track_recording_lap:
+                self._append_track_point(event)
+            elif event.current_lap > self._track_recording_lap:
+                self._track_ready = len(self._track_points) >= 2
+                self._track_force_snapshot = True
+
+        self._track_last_lap = event.current_lap
+
+    def _track_snapshot(self) -> list[tuple[float, float]] | None:
+        now = time.monotonic()
+        if not self._track_points:
+            if self._track_force_snapshot:
+                self._track_force_snapshot = False
+                self._track_last_snapshot_at = now
+                return []
+            return None
+        if self._track_force_snapshot or now - self._track_last_snapshot_at >= self._TRACK_SNAPSHOT_INTERVAL_S:
+            self._track_last_snapshot_at = now
+            self._track_force_snapshot = False
+            return list(self._track_points)
+        return None
 
     def _reference_elapsed(self, distance: float) -> float | None:
         samples = self._reference_lap
@@ -163,7 +270,20 @@ class LiveTelemetryHub:
         return None if reference_ms is None else elapsed_ms - reference_ms
 
     def publish(self, event: TelemetryStat | LiveFrame) -> int:
-        frame = event if isinstance(event, LiveFrame) else LiveFrame.from_telemetry(event, self._lap_delta(event), self._last_lap_delta_ms)
+        if isinstance(event, LiveFrame):
+            frame = event
+        else:
+            delta = self._lap_delta(event)
+            self._update_track(event)
+            frame = LiveFrame.from_telemetry(
+                event,
+                delta,
+                self._last_lap_delta_ms,
+                session_id=self._session_id,
+                track_trace=self._track_snapshot(),
+                track_recording_lap=self._track_recording_lap,
+                track_ready=self._track_ready,
+            )
         with self._condition:
             self._latest = frame
             self._sequence += 1

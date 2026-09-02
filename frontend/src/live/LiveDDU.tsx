@@ -24,6 +24,13 @@ interface LiveFrame {
   delta_to_reference_ms?: number | null
   last_lap_delta_ms?: number | null
   lap_distance_m?: number
+  session_id?: number
+  position_x?: number | null
+  position_y?: number | null
+  elevation_m?: number | null
+  track_trace?: Array<[number, number]> | null
+  track_recording_lap?: number | null
+  track_ready?: boolean
   fuel_l?: number | null
   fuel_capacity_l?: number | null
   boost?: number | null
@@ -100,6 +107,79 @@ function PedalBar({ label, value, tone }: { label: string, value: unknown, tone:
       <i style={{ transform: `scaleY(${clamp(value) / 100})` }} />
     </div>
   </div>
+}
+
+type TrackPoint = { x: number, y: number }
+
+function TrackMap({ frame }: { frame: LiveFrame | null }) {
+  const [trace, setTrace] = useState<TrackPoint[]>([])
+  const traceSession = useRef<number | null>(null)
+
+  useEffect(() => {
+    const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
+    const session = finite(frame?.session_id) ? frame.session_id : null
+    if (!active) {
+      traceSession.current = null
+      setTrace([])
+      return
+    }
+    if (traceSession.current !== session) {
+      traceSession.current = session
+      setTrace([])
+    }
+    if (Array.isArray(frame.track_trace)) {
+      setTrace(frame.track_trace.flatMap(([x, y]) => finite(x) && finite(y) ? [{ x, y }] : []))
+    }
+  }, [frame?.in_race, frame?.lap, frame?.session_id, frame?.track_trace])
+
+  const marker = finite(frame?.position_x) && finite(frame?.position_y)
+    ? { x: frame.position_x, y: frame.position_y }
+    : null
+  const ready = !!frame?.track_ready
+  // Live packets have no official corner metadata, so labels would be speculative.
+  const projected = useMemo(() => {
+    const source = trace.length ? (!ready && marker ? [...trace, marker] : trace) : marker ? [marker] : []
+    if (!source.length) return { path: '', marker: null as { x: number, y: number } | null }
+    const minX = Math.min(...source.map((point) => point.x))
+    const maxX = Math.max(...source.map((point) => point.x))
+    const minY = Math.min(...source.map((point) => point.y))
+    const maxY = Math.max(...source.map((point) => point.y))
+    const span = Math.max(maxX - minX, maxY - minY, 1)
+    const project = (point: TrackPoint) => ({
+      x: 50 + ((point.x - (minX + maxX) / 2) / span) * 82,
+      y: 50 - ((point.y - (minY + maxY) / 2) / span) * 82,
+    })
+    const points = trace.map(project)
+    return {
+      path: points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' '),
+      marker: marker ? project(marker) : null,
+    }
+  }, [marker, ready, trace])
+  const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
+  const status = !active
+    ? 'WAITING FOR TELEMETRY'
+    : !marker
+      ? 'POSITION DATA UNAVAILABLE'
+      : ready
+        ? 'TRACE READY'
+        : finite(frame?.track_recording_lap)
+          ? `LEARNING LAP ${frame.track_recording_lap}`
+          : 'WAITING FOR LAP START'
+  const state = !marker ? 'unavailable' : ready ? 'ready' : 'recording'
+
+  return <section className="live-track-map" aria-label="Live circuit map">
+    <div className="track-map-heading"><span>TRACK MAP</span><b className={state}>{status}</b></div>
+    <svg viewBox="0 0 100 100" role="img" aria-label={status} preserveAspectRatio="xMidYMid meet">
+      <defs>
+        <filter id="track-glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="1.1" /></filter>
+      </defs>
+      <rect x="2" y="2" width="96" height="96" rx="4" className="track-map-frame" />
+      {projected.path && <polyline points={projected.path} className="track-line-glow" filter="url(#track-glow)" />}
+      {projected.path && <polyline points={projected.path} className="track-line" />}
+      {projected.marker && <g className="track-marker" transform={`translate(${projected.marker.x} ${projected.marker.y})`}><circle r="4.6" /><circle r="2.25" /></g>}
+    </svg>
+    <small>{ready ? 'Full-lap trace retained by the telemetry hub' : 'Waiting for a complete live lap'}</small>
+  </section>
 }
 
 export default function LiveDDU() {
@@ -182,11 +262,12 @@ export default function LiveDDU() {
   }, [frame?.lap, frame?.captured_at, trackedLap])
 
   useEffect(() => {
-    if (!finite(frame?.captured_at)) return
+    const capturedAt = frame?.captured_at
+    if (!frame || !finite(capturedAt)) return
     if (frame.paused) {
-      if (pausedAt === null) setPausedAt(frame.captured_at)
+      if (pausedAt === null) setPausedAt(capturedAt)
     } else if (pausedAt !== null) {
-      setPausedDurationMs((total) => total + Math.max(0, (frame.captured_at - pausedAt) * 1000))
+      setPausedDurationMs((total) => total + Math.max(0, (capturedAt - pausedAt) * 1000))
       setPausedAt(null)
     }
   }, [frame?.paused, frame?.captured_at, pausedAt])
@@ -215,7 +296,6 @@ export default function LiveDDU() {
   const showLapDelta = finite(frame?.lap) && frame.lap > 2 && frame?.in_race !== false && lastLapDeltaMs !== null
   const rpmMaximum = Math.max(finite(frame?.rpm_limiter) && frame.rpm_limiter > 0 ? frame.rpm_limiter : 0, finite(frame?.rpm_warning) && frame.rpm_warning > 0 ? frame.rpm_warning * 1.08 : 0, finite(frame?.rpm) ? frame.rpm : 0, 1)
   const rpmPercent = Math.min(100, Math.max(0, ((frame?.rpm || 0) / rpmMaximum) * 100))
-  const rpmBand = rpmPercent >= 88 ? 'red' : rpmPercent >= 70 ? 'amber' : 'green'
   const atShift = finite(frame?.rpm_warning) && frame.rpm_warning > 0 && (frame?.rpm || 0) >= frame.rpm_warning
   const fuelPercent = finite(frame?.fuel_l) && finite(frame?.fuel_capacity_l) && frame.fuel_capacity_l > 0 ? Math.max(0, Math.min(100, frame.fuel_l / frame.fuel_capacity_l * 100)) : null
   const fuelState = fuelPercent === null ? 'unknown' : fuelPercent <= 10 ? 'critical' : fuelPercent <= 30 ? 'reserve' : 'normal'
@@ -247,6 +327,7 @@ export default function LiveDDU() {
         <div className="race-values">
           <div className="race-stat position"><span>POSITION</span><strong>{finite(frame?.position) && frame.position > 0 ? frame.position : '—'}<small> / {finite(frame?.total_racers) && frame.total_racers > 0 ? frame.total_racers : '—'}</small></strong></div>
           <div className="race-stat laps"><span>LAPS</span><strong>{finite(frame?.lap) && frame.lap > 0 ? frame.lap : '—'}<small> / {finite(frame?.total_laps) && frame.total_laps > 0 ? frame.total_laps : '—'}</small></strong><em>{numberOrDash(frame?.lap_distance_m, 0)} m</em></div>
+          <TrackMap frame={frame} />
           <div className="current-time lap-time"><strong>{formatLapTime(currentLapMs)}</strong></div>
           <div className="best-time lap-time"><strong>{formatLapTime(frame?.best_lap_ms)}</strong></div>
           <div className="last-time lap-time"><strong>{formatLapTime(frame?.last_lap_ms)}</strong></div>

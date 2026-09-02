@@ -169,3 +169,14 @@
 .inactive-icon { color: #667681; font-size: 42px; line-height: .8; }.ddu-inactive-overlay strong { color: #e9f0f3; font: 700 clamp(18px, 2.4vw, 30px)/1 'Technology', 'Barlow Condensed', sans-serif; letter-spacing: .12em; }.ddu-inactive-overlay small { max-width: 520px; color: #8696a1; font-size: 11px; font-weight: 700; letter-spacing: .16em; text-align: center; }
 .pedal-track i { height: 100%; transform-origin: center bottom; transition: transform 50ms linear; will-change: transform; contain: strict; }
 .band-scale { contain: layout paint; }
+
+/* The left card keeps race context top-to-bottom: position/lap, live map, then times. */
+.race-values { grid-template-areas: 'position laps' 'map map' 'current current' 'best best' 'last last'; grid-template-rows: auto minmax(170px, 1fr) auto auto auto; }
+.race-values .position { grid-area: position; }.race-values .laps { grid-area: laps; }
+.race-values .current-time { grid-area: current; }.race-values .best-time { grid-area: best; }.race-values .last-time { grid-area: last; }
+.live-track-map { grid-area: map; min-height: 170px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 5px; padding: 8px; border: 1px solid #2d3842; border-radius: 4px; background: radial-gradient(ellipse at 50% 38%, #14212a, #090e12 72%); overflow: hidden; }
+.track-map-heading { display: flex; justify-content: space-between; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .11em; }.track-map-heading b { color: #8ca0aa; font-size: 8px; text-align: right; }.track-map-heading b.recording { color: #ffb86a; }.track-map-heading b.ready { color: #62dc9b; }.track-map-heading b.unavailable { color: #ff8477; }
+.live-track-map svg { width: 100%; min-height: 0; height: 100%; display: block; }.track-map-frame { fill: #071015; stroke: #263640; stroke-width: .6; }.track-line-glow { fill: none; stroke: #ff692e; stroke-width: 2.5; opacity: .42; }.track-line { fill: none; stroke: #e6edf0; stroke-width: 1.15; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }.track-marker circle:first-child { fill: #ff692e; stroke: #ffd2b6; stroke-width: .7; opacity: .92; }.track-marker circle:last-child { fill: #fff7e8; }.live-track-map small { color: #71808b; font-size: 8px; font-weight: 700; letter-spacing: .06em; text-align: center; }
+
+@media (orientation: landscape) and (max-width: 900px) { .race-values { grid-template-rows: auto minmax(82px, 1fr) auto auto auto; }.live-track-map { min-height: 82px; padding: 4px; gap: 2px; }.track-map-heading { font-size: 7px; }.track-map-heading b, .live-track-map small { font-size: 6px; } }
+@media (max-width: 620px) { .race-values { grid-template-rows: auto minmax(150px, 1fr) auto auto auto; }.live-track-map { min-height: 150px; } }
