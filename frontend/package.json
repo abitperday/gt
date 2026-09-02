@@ -20,6 +20,7 @@
     "react-chartjs-2": "^5.3.0",
     "react-dom": "^19.1.1",
     "recharts": "^3.2.1",
+    "rolldown": "^1.2.6",
     "tslib": "^2.8.1"
   },
   "devDependencies": {
@@ -36,6 +37,5 @@
     "vite": "npm:rolldown-vite@7.1.12"
   },
   "overrides": {
-    "vite": "npm:rolldown-vite@7.1.12"
   }
 }
