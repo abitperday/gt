@@ -62,6 +62,22 @@ async def live_telemetry(websocket: WebSocket):
         await send_status(
             "waiting", "Waiting for GT7 telemetry from the collector.", force=True
         )
+        # A reconnect gets the server-held map immediately. Later frames stay
+        # latest-only and contain the full geometry only at its snapshot cadence.
+        initial = hub.snapshot(include_track=True)
+        if initial is not None:
+            sequence, frame = initial
+            if max(0.0, time.time() - frame.captured_at) <= stale_after_seconds:
+                await websocket.send_json(
+                    {
+                        "type": "frame",
+                        "status": "live",
+                        "age_ms": max(0, round((time.time() - frame.captured_at) * 1000)),
+                        "frame": frame.model_dump(mode="json"),
+                    }
+                )
+                current_status = "live"
+                last_frame_sent = time.monotonic()
         while True:
             update = await asyncio.to_thread(hub.wait_for_update, sequence, 0.5)
             snapshot = update or hub.snapshot()

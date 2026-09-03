@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import './LiveDDU.css'
 
 type ConnectionState = 'connecting' | 'waiting' | 'live' | 'stale'
@@ -31,6 +31,7 @@ interface LiveFrame {
   track_trace?: Array<[number, number]> | null
   track_recording_lap?: number | null
   track_ready?: boolean
+  track_tone?: 'neutral' | 'fast' | 'slow'
   fuel_l?: number | null
   fuel_capacity_l?: number | null
   boost?: number | null
@@ -110,6 +111,12 @@ function PedalBar({ label, value, tone }: { label: string, value: unknown, tone:
 }
 
 type TrackPoint = { x: number, y: number }
+type TrackTone = 'neutral' | 'fast' | 'slow'
+type TrackGeometry = { path: string, project: (point: TrackPoint) => TrackPoint }
+
+const TrackTrace = memo(function TrackTrace({ geometry, tone }: { geometry: TrackGeometry | null, tone: TrackTone }) {
+  return geometry?.path ? <polyline points={geometry.path} className={`track-line ${tone}`} /> : null
+})
 
 function TrackMap({ frame }: { frame: LiveFrame | null }) {
   const [trace, setTrace] = useState<TrackPoint[]>([])
@@ -136,25 +143,26 @@ function TrackMap({ frame }: { frame: LiveFrame | null }) {
     ? { x: frame.position_x, y: frame.position_y }
     : null
   const ready = !!frame?.track_ready
-  // Live packets have no official corner metadata, so labels would be speculative.
-  const projected = useMemo(() => {
-    const source = trace.length ? (!ready && marker ? [...trace, marker] : trace) : marker ? [marker] : []
-    if (!source.length) return { path: '', marker: null as { x: number, y: number } | null }
-    const minX = Math.min(...source.map((point) => point.x))
-    const maxX = Math.max(...source.map((point) => point.x))
-    const minY = Math.min(...source.map((point) => point.y))
-    const maxY = Math.max(...source.map((point) => point.y))
+  // This runs only for a server trail snapshot, not for each 25 Hz marker update.
+  // GT7's horizontal plane is X/Y; Z is elevation.
+  const geometry = useMemo<TrackGeometry | null>(() => {
+    if (!trace.length) return null
+    const minX = Math.min(...trace.map((point) => point.x))
+    const maxX = Math.max(...trace.map((point) => point.x))
+    const minY = Math.min(...trace.map((point) => point.y))
+    const maxY = Math.max(...trace.map((point) => point.y))
     const span = Math.max(maxX - minX, maxY - minY, 1)
     const project = (point: TrackPoint) => ({
       x: 50 + ((point.x - (minX + maxX) / 2) / span) * 82,
       y: 50 - ((point.y - (minY + maxY) / 2) / span) * 82,
     })
-    const points = trace.map(project)
     return {
-      path: points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' '),
-      marker: marker ? project(marker) : null,
+      path: trace.map(project).map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' '),
+      project,
     }
-  }, [marker, ready, trace])
+  }, [trace])
+  const projectedMarker = marker && geometry ? geometry.project(marker) : null
+  const tone: TrackTone = frame?.track_tone === 'fast' || frame?.track_tone === 'slow' ? frame.track_tone : 'neutral'
   const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
   const status = !active
     ? 'WAITING FOR TELEMETRY'
@@ -170,13 +178,9 @@ function TrackMap({ frame }: { frame: LiveFrame | null }) {
   return <section className="live-track-map" aria-label="Live circuit map">
     <div className="track-map-heading"><span>TRACK MAP</span><b className={state}>{status}</b></div>
     <svg viewBox="0 0 100 100" role="img" aria-label={status} preserveAspectRatio="xMidYMid meet">
-      <defs>
-        <filter id="track-glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="1.1" /></filter>
-      </defs>
       <rect x="2" y="2" width="96" height="96" rx="4" className="track-map-frame" />
-      {projected.path && <polyline points={projected.path} className="track-line-glow" filter="url(#track-glow)" />}
-      {projected.path && <polyline points={projected.path} className="track-line" />}
-      {projected.marker && <g className="track-marker" transform={`translate(${projected.marker.x} ${projected.marker.y})`}><circle r="4.6" /><circle r="2.25" /></g>}
+      <TrackTrace geometry={geometry} tone={tone} />
+      {projectedMarker && <g className="track-marker" transform={`translate(${projectedMarker.x} ${projectedMarker.y})`}><circle r="4.6" /><circle r="2.25" /></g>}
     </svg>
     <small>{ready ? 'Full-lap trace retained by the telemetry hub' : 'Waiting for a complete live lap'}</small>
   </section>
@@ -318,7 +322,7 @@ export default function LiveDDU() {
       <nav><a href="/">Recorded analysis</a><button onClick={() => document.documentElement.requestFullscreen?.()}>Full screen</button></nav>
     </header>
     <section className={`speed-rpm-band ${atShift ? 'shift' : ''}`} aria-label={`Speed ${numberOrDash(frame?.speed_kmh)} kilometres per hour`}>
-      <div className="band-scale">{Array.from({ length: 32 }, (_, index) => <i key={index} className={index < Math.ceil(rpmPercent / 3.125) ? 'active' : ''} />)}</div>
+      <div className={`band-scale ${rpmPercent >= 88 ? 'red' : rpmPercent >= 70 ? 'amber' : 'green'}`}><i style={{ transform: `scaleX(${rpmPercent / 100})` }} /></div>
       <div className="band-rpm">{numberOrDash(frame?.rpm)} RPM</div>
     </section>
     <section className="ddu-grid">

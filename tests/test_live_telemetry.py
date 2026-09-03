@@ -63,6 +63,34 @@ def test_hub_retains_a_complete_planar_trace_for_new_dashboard_connections():
     assert frame.session_id == 1
     assert frame.track_ready is True
     assert frame.track_trace == [(0.0, 0.0), (10.0, 0.0)]
+    assert frame.track_tone == "neutral"
+
+
+def test_hub_colours_the_persistent_trace_only_after_a_valid_lap_comparison():
+    hub = LiveTelemetryHub()
+    hub.publish(telemetry(current_lap=1, lap_distance=0, x=0, y=0, received_at=100.0))
+    hub.publish(telemetry(current_lap=1, lap_distance=10, x=10, y=0, received_at=101.0))
+    hub.publish(telemetry(current_lap=2, lap_distance=0, x=0, y=0, last_lap=100_000, received_at=102.0))
+    assert hub.snapshot()[1].track_tone == "neutral"  # type: ignore[index]
+
+    hub.publish(telemetry(current_lap=3, lap_distance=0, x=0, y=0, last_lap=101_000, received_at=103.0))
+    assert hub.snapshot()[1].track_tone == "slow"  # type: ignore[index]
+
+    hub.publish(telemetry(current_lap=4, lap_distance=0, x=0, y=0, last_lap=99_000, received_at=104.0))
+    assert hub.snapshot()[1].track_tone == "fast"  # type: ignore[index]
+
+
+def test_hub_can_restore_the_server_held_trace_without_resending_it_per_frame():
+    hub = LiveTelemetryHub()
+    hub.publish(telemetry(current_lap=1, lap_distance=0, x=0, y=0, received_at=100.0))
+    hub.publish(telemetry(current_lap=1, lap_distance=10, x=10, y=0, received_at=101.0))
+    hub.publish(telemetry(current_lap=2, lap_distance=0, x=0, y=0, received_at=102.0))
+    hub.publish(telemetry(current_lap=2, lap_distance=20, x=0, y=20, received_at=103.0))
+
+    latest = hub.snapshot()
+    restored = hub.snapshot(include_track=True)
+    assert latest is not None and latest[1].track_trace is None
+    assert restored is not None and restored[1].track_trace == [(0.0, 0.0), (10.0, 0.0)]
 
 
 def test_hub_is_latest_wins_without_a_packet_backlog():

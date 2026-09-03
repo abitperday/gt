@@ -1,6 +1,7 @@
 import math
 import threading
 import time
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -43,6 +44,7 @@ class LiveFrame(BaseModel):
     track_trace: list[tuple[float, float]] | None = None
     track_recording_lap: int | None = None
     track_ready: bool = False
+    track_tone: Literal["neutral", "fast", "slow"] = "neutral"
     fuel_l: float | None
     fuel_capacity_l: float | None
     boost: float | None
@@ -74,6 +76,7 @@ class LiveFrame(BaseModel):
         track_trace: list[tuple[float, float]] | None = None,
         track_recording_lap: int | None = None,
         track_ready: bool = False,
+        track_tone: Literal["neutral", "fast", "slow"] = "neutral",
     ) -> "LiveFrame":
         return cls(
             packet_id=event.package_id,
@@ -104,6 +107,7 @@ class LiveFrame(BaseModel):
             track_trace=track_trace,
             track_recording_lap=track_recording_lap,
             track_ready=track_ready,
+            track_tone=track_tone,
             fuel_l=_finite(event.fuel_current),
             fuel_capacity_l=_finite(event.fuel_capacity),
             boost=_finite(event.boost),
@@ -154,6 +158,9 @@ class LiveTelemetryHub:
         self._track_sample_distance_m = self._TRACK_SAMPLE_DISTANCE_M
         self._track_last_snapshot_at = 0.0
         self._track_force_snapshot = False
+        self._track_tone: Literal["neutral", "fast", "slow"] = "neutral"
+        self._track_best_lap_time: int | None = None
+        self._track_completed_laps = 0
 
     def _reset_track(self) -> None:
         self._track_points = []
@@ -162,6 +169,22 @@ class LiveTelemetryHub:
         self._track_last_lap = None
         self._track_sample_distance_m = self._TRACK_SAMPLE_DISTANCE_M
         self._track_force_snapshot = True
+        self._track_tone = "neutral"
+        self._track_best_lap_time = None
+        self._track_completed_laps = 0
+
+    def _finish_track_lap(self, lap_time: int) -> None:
+        """Classify this completed lap against valid laps from the hub session."""
+        if lap_time <= 0:
+            return
+        best = self._track_best_lap_time
+        self._track_tone = (
+            "neutral"
+            if not self._track_completed_laps
+            else "fast" if best is not None and lap_time <= best else "slow"
+        )
+        self._track_best_lap_time = lap_time if best is None else min(best, lap_time)
+        self._track_completed_laps += 1
 
     def _append_track_point(self, event: TelemetryStat) -> None:
         x = _finite(event.x)
@@ -201,12 +224,15 @@ class LiveTelemetryHub:
             self._track_recording_lap = event.current_lap
             self._track_force_snapshot = True
 
-        if self._track_recording_lap is not None and not self._track_ready:
-            if event.current_lap == self._track_recording_lap:
+        if self._track_recording_lap is not None:
+            if event.current_lap == self._track_recording_lap and not self._track_ready:
                 self._append_track_point(event)
             elif event.current_lap > self._track_recording_lap:
-                self._track_ready = len(self._track_points) >= 2
-                self._track_force_snapshot = True
+                if not self._track_ready:
+                    self._track_ready = len(self._track_points) >= 2
+                if previous_lap is not None and event.current_lap > previous_lap:
+                    self._finish_track_lap(event.last_lap)
+                    self._track_force_snapshot = True
 
         self._track_last_lap = event.current_lap
 
@@ -283,6 +309,7 @@ class LiveTelemetryHub:
                 track_trace=self._track_snapshot(),
                 track_recording_lap=self._track_recording_lap,
                 track_ready=self._track_ready,
+                track_tone=self._track_tone,
             )
         with self._condition:
             self._latest = frame
@@ -291,11 +318,16 @@ class LiveTelemetryHub:
             self._condition.notify_all()
             return sequence
 
-    def snapshot(self) -> tuple[int, LiveFrame] | None:
+    def snapshot(
+        self, *, include_track: bool = False
+    ) -> tuple[int, LiveFrame] | None:
         with self._condition:
             if self._latest is None:
                 return None
-            return self._sequence, self._latest
+            frame = self._latest
+            if include_track and frame.track_trace is None and self._track_points:
+                frame = frame.model_copy(update={"track_trace": list(self._track_points)})
+            return self._sequence, frame
 
     def wait_for_update(
         self, after_sequence: int, timeout: float
