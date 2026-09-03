@@ -273,9 +273,14 @@ class LiveTelemetryHub:
             self._last_lap_delta_ms = None
             return None
         if self._active_lap != event.current_lap:
-            if self._active_lap is not None and event.last_lap > 0 and self._best_lap_seen and self._best_lap_seen > 0 and event.last_lap != self._best_lap_seen:
-                self._last_lap_delta_ms = event.last_lap - self._best_lap_seen
             if self._active_lap is not None and event.last_lap > 0:
+                # Always refresh the completed-lap delta. Keeping an older positive
+                # delta here made an equal/better lap inherit a red indication.
+                self._last_lap_delta_ms = (
+                    None
+                    if self._best_lap_seen is None or self._best_lap_seen <= 0
+                    else event.last_lap - self._best_lap_seen
+                )
                 self._best_lap_seen = event.last_lap if self._best_lap_seen is None else min(self._best_lap_seen, event.last_lap)
             if len(self._active_samples) >= 2:
                 lap_time = self._active_samples[-1][1]

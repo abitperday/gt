@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './LiveDDU.css'
 
 type ConnectionState = 'connecting' | 'waiting' | 'live' | 'stale'
@@ -105,22 +105,33 @@ function PedalBar({ label, value, tone }: { label: string, value: unknown, tone:
   return <div className={`pedal ${tone}`}>
     <div className="pedal-heading"><span>{label}</span><strong>{numberOrDash(value)}<small>%</small></strong></div>
     <div className="pedal-track" aria-label={`${label}: ${numberOrDash(value)} percent`}>
-      <i style={{ transform: `scaleY(${clamp(value) / 100})` }} />
+      <i />
     </div>
   </div>
 }
 
 type TrackPoint = { x: number, y: number }
 type TrackTone = 'neutral' | 'fast' | 'slow'
-type TrackGeometry = { path: string, project: (point: TrackPoint) => TrackPoint }
+type TrackGeometry = { project: (point: TrackPoint) => TrackPoint, points: TrackPoint[] }
+const TRACK_CANVAS_SIZE = 512
 
-const TrackTrace = memo(function TrackTrace({ geometry, tone }: { geometry: TrackGeometry | null, tone: TrackTone }) {
-  return geometry?.path ? <polyline points={geometry.path} className={`track-line ${tone}`} /> : null
-})
+function clearCanvas(canvas: HTMLCanvasElement | null) {
+  if (!canvas) return null
+  if (canvas.width !== TRACK_CANVAS_SIZE || canvas.height !== TRACK_CANVAS_SIZE) {
+    canvas.width = TRACK_CANVAS_SIZE
+    canvas.height = TRACK_CANVAS_SIZE
+  }
+  const context = canvas.getContext('2d')
+  context?.clearRect(0, 0, TRACK_CANVAS_SIZE, TRACK_CANVAS_SIZE)
+  return context
+}
 
 function TrackMap({ frame }: { frame: LiveFrame | null }) {
   const [trace, setTrace] = useState<TrackPoint[]>([])
+  const [geometry, setGeometry] = useState<TrackGeometry | null>(null)
   const traceSession = useRef<number | null>(null)
+  const staticCanvas = useRef<HTMLCanvasElement | null>(null)
+  const markerCanvas = useRef<HTMLCanvasElement | null>(null)
 
   useEffect(() => {
     const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
@@ -128,61 +139,88 @@ function TrackMap({ frame }: { frame: LiveFrame | null }) {
     if (!active) {
       traceSession.current = null
       setTrace([])
+      setGeometry(null)
       return
     }
     if (traceSession.current !== session) {
       traceSession.current = session
       setTrace([])
+      setGeometry(null)
     }
-    if (Array.isArray(frame.track_trace)) {
+    if (frame.track_ready && Array.isArray(frame.track_trace)) {
       setTrace(frame.track_trace.flatMap(([x, y]) => finite(x) && finite(y) ? [{ x, y }] : []))
     }
-  }, [frame?.in_race, frame?.lap, frame?.session_id, frame?.track_trace])
+  }, [frame?.in_race, frame?.lap, frame?.session_id, frame?.track_ready, frame?.track_trace])
 
-  const marker = finite(frame?.position_x) && finite(frame?.position_y)
-    ? { x: frame.position_x, y: frame.position_y }
-    : null
   const ready = !!frame?.track_ready
-  // This runs only for a server trail snapshot, not for each 25 Hz marker update.
-  // GT7's horizontal plane is X/Y; Z is elevation.
-  const geometry = useMemo<TrackGeometry | null>(() => {
-    if (!trace.length) return null
+  const tone: TrackTone = frame?.track_tone === 'fast' || frame?.track_tone === 'slow' ? frame.track_tone : 'neutral'
+
+  useEffect(() => {
+    if (!trace.length) {
+      setGeometry(null)
+      return
+    }
+    // This runs only for a server trail snapshot. GT7's horizontal plane is X/Y;
+    // Z is elevation and must not be used for the circuit projection.
     const minX = Math.min(...trace.map((point) => point.x))
     const maxX = Math.max(...trace.map((point) => point.x))
     const minY = Math.min(...trace.map((point) => point.y))
     const maxY = Math.max(...trace.map((point) => point.y))
     const span = Math.max(maxX - minX, maxY - minY, 1)
     const project = (point: TrackPoint) => ({
-      x: 50 + ((point.x - (minX + maxX) / 2) / span) * 82,
-      y: 50 - ((point.y - (minY + maxY) / 2) / span) * 82,
+      x: TRACK_CANVAS_SIZE / 2 + ((point.x - (minX + maxX) / 2) / span) * TRACK_CANVAS_SIZE * .41,
+      y: TRACK_CANVAS_SIZE / 2 - ((point.y - (minY + maxY) / 2) / span) * TRACK_CANVAS_SIZE * .41,
     })
-    return {
-      path: trace.map(project).map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' '),
-      project,
-    }
+    setGeometry({ points: trace.map(project), project })
   }, [trace])
-  const projectedMarker = marker && geometry ? geometry.project(marker) : null
-  const tone: TrackTone = frame?.track_tone === 'fast' || frame?.track_tone === 'slow' ? frame.track_tone : 'neutral'
+
+  useEffect(() => {
+    const context = clearCanvas(staticCanvas.current)
+    if (!context || !geometry) return
+    context.fillStyle = '#071015'
+    context.fillRect(0, 0, TRACK_CANVAS_SIZE, TRACK_CANVAS_SIZE)
+    context.strokeStyle = '#263640'
+    context.lineWidth = 3
+    context.strokeRect(10, 10, TRACK_CANVAS_SIZE - 20, TRACK_CANVAS_SIZE - 20)
+    context.strokeStyle = tone === 'fast' ? '#48d983' : tone === 'slow' ? '#f15d56' : '#e6edf0'
+    context.lineWidth = 6
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+    context.beginPath()
+    geometry.points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y))
+    context.stroke()
+  }, [geometry, tone])
+
+  useEffect(() => {
+    const context = clearCanvas(markerCanvas.current)
+    if (!context || !geometry || !ready || !finite(frame?.position_x) || !finite(frame?.position_y)) return
+    const marker = geometry.project({ x: frame.position_x, y: frame.position_y })
+    context.fillStyle = '#ff692e'
+    context.beginPath()
+    context.arc(marker.x, marker.y, 18, 0, Math.PI * 2)
+    context.fill()
+    context.fillStyle = '#fff7e8'
+    context.beginPath()
+    context.arc(marker.x, marker.y, 8, 0, Math.PI * 2)
+    context.fill()
+  }, [frame?.position_x, frame?.position_y, geometry, ready])
+
   const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
   const status = !active
     ? 'WAITING FOR TELEMETRY'
-    : !marker
-      ? 'POSITION DATA UNAVAILABLE'
-      : ready
+    : ready
         ? 'TRACE READY'
         : finite(frame?.track_recording_lap)
           ? `LEARNING LAP ${frame.track_recording_lap}`
           : 'WAITING FOR LAP START'
-  const state = !marker ? 'unavailable' : ready ? 'ready' : 'recording'
+  const state = ready ? 'ready' : 'recording'
 
   return <section className="live-track-map" aria-label="Live circuit map">
     <div className="track-map-heading"><span>TRACK MAP</span><b className={state}>{status}</b></div>
-    <svg viewBox="0 0 100 100" role="img" aria-label={status} preserveAspectRatio="xMidYMid meet">
-      <rect x="2" y="2" width="96" height="96" rx="4" className="track-map-frame" />
-      <TrackTrace geometry={geometry} tone={tone} />
-      {projectedMarker && <g className="track-marker" transform={`translate(${projectedMarker.x} ${projectedMarker.y})`}><circle r="4.6" /><circle r="2.25" /></g>}
-    </svg>
-    <small>{ready ? 'Full-lap trace retained by the telemetry hub' : 'Waiting for a complete live lap'}</small>
+    {ready && geometry
+      ? <div className="track-canvas-stack" role="img" aria-label={`Circuit trace: ${tone}`}><canvas ref={staticCanvas} /><canvas ref={markerCanvas} /></div>
+      : <div className="track-map-learning">MAPPING THE CIRCUIT…</div>}
+    <small>{ready ? 'Persistent full-lap trace · live position' : 'Position will appear after the first complete lap'}</small>
   </section>
 }
 
@@ -200,6 +238,8 @@ export default function LiveDDU() {
   const blinkTimer = useRef<number | null>(null)
   const pendingFrame = useRef<LiveFrame | null>(null)
   const animationFrame = useRef<number | null>(null)
+  const lastStateFrameAt = useRef(0)
+  const dashboard = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     document.body.classList.add('live-ddu-body')
@@ -219,8 +259,27 @@ export default function LiveDDU() {
             pendingFrame.current = payload.frame
             setConnection('live')
             setMessage('Receiving GT7 telemetry')
-            if (animationFrame.current === null) animationFrame.current = window.requestAnimationFrame(() => {
-              if (pendingFrame.current) setFrame(pendingFrame.current)
+            if (animationFrame.current === null) animationFrame.current = window.requestAnimationFrame((now) => {
+              const nextFrame = pendingFrame.current
+              const root = dashboard.current
+              if (nextFrame && root) {
+                const rpmLimit = Math.max(
+                  finite(nextFrame.rpm_limiter) && nextFrame.rpm_limiter > 0 ? nextFrame.rpm_limiter : 0,
+                  finite(nextFrame.rpm_warning) && nextFrame.rpm_warning > 0 ? nextFrame.rpm_warning * 1.08 : 0,
+                  finite(nextFrame.rpm) ? nextFrame.rpm : 0,
+                  1,
+                )
+                const rpmLevel = Math.max(0, Math.min(1, (nextFrame.rpm || 0) / rpmLimit))
+                root.style.setProperty('--brake-fill', String(clamp(nextFrame.brake_pct) / 100))
+                root.style.setProperty('--throttle-fill', String(clamp(nextFrame.throttle_pct) / 100))
+                root.style.setProperty('--rpm-fill', String(rpmLevel))
+                root.style.setProperty('--rpm-colour', rpmLevel >= .88 ? '#ee594d' : rpmLevel >= .70 ? '#e9c14a' : '#37d985')
+              }
+              // Controls update every packet; the rest of the React tree updates at 10 Hz.
+              if (nextFrame && now - lastStateFrameAt.current >= 100) {
+                setFrame(nextFrame)
+                lastStateFrameAt.current = now
+              }
               animationFrame.current = null
             })
           } else if (payload.type === 'status') {
@@ -298,8 +357,6 @@ export default function LiveDDU() {
     : null
   const lastLapDeltaMs = finite(frame?.last_lap_delta_ms) ? frame.last_lap_delta_ms : null
   const showLapDelta = finite(frame?.lap) && frame.lap > 2 && frame?.in_race !== false && lastLapDeltaMs !== null
-  const rpmMaximum = Math.max(finite(frame?.rpm_limiter) && frame.rpm_limiter > 0 ? frame.rpm_limiter : 0, finite(frame?.rpm_warning) && frame.rpm_warning > 0 ? frame.rpm_warning * 1.08 : 0, finite(frame?.rpm) ? frame.rpm : 0, 1)
-  const rpmPercent = Math.min(100, Math.max(0, ((frame?.rpm || 0) / rpmMaximum) * 100))
   const atShift = finite(frame?.rpm_warning) && frame.rpm_warning > 0 && (frame?.rpm || 0) >= frame.rpm_warning
   const fuelPercent = finite(frame?.fuel_l) && finite(frame?.fuel_capacity_l) && frame.fuel_capacity_l > 0 ? Math.max(0, Math.min(100, frame.fuel_l / frame.fuel_capacity_l * 100)) : null
   const fuelState = fuelPercent === null ? 'unknown' : fuelPercent <= 10 ? 'critical' : fuelPercent <= 30 ? 'reserve' : 'normal'
@@ -314,7 +371,7 @@ export default function LiveDDU() {
   const panelInactive = !frame || !finite(frame.lap) || frame.lap <= 0 || frame.in_race === false
   const raceFinished = !!frame && finite(frame.lap) && finite(frame.total_laps) && frame.total_laps > 0 && frame.lap > frame.total_laps
 
-  return <main className="ddu-shell">
+  return <main ref={dashboard} className="ddu-shell">
     {(panelInactive || raceFinished) && <div className="ddu-inactive-overlay" role="status" aria-live="polite"><div>{raceFinished ? <><span className="inactive-icon">✓</span><strong>CORRIDA FINALIZADA!</strong><small>SIGA PARA A TELA DE ANÁLISE PARA VER TODOS OS DETALHES</small></> : <><span className="inactive-icon">◌</span><strong>INICIE UMA CORRIDA</strong><small>PARA ATIVAR O PAINEL</small></>}</div></div>}
     <header className="ddu-header">
       <div className="identity"><strong className="live-title">GT7 / LIVE DDU</strong><span className={`connection ${connection}`}><i />{connection}</span></div>
@@ -322,7 +379,7 @@ export default function LiveDDU() {
       <nav><a href="/">Recorded analysis</a><button onClick={() => document.documentElement.requestFullscreen?.()}>Full screen</button></nav>
     </header>
     <section className={`speed-rpm-band ${atShift ? 'shift' : ''}`} aria-label={`Speed ${numberOrDash(frame?.speed_kmh)} kilometres per hour`}>
-      <div className={`band-scale ${rpmPercent >= 88 ? 'red' : rpmPercent >= 70 ? 'amber' : 'green'}`}><i style={{ transform: `scaleX(${rpmPercent / 100})` }} /></div>
+      <div className="band-scale"><i /></div>
       <div className="band-rpm">{numberOrDash(frame?.rpm)} RPM</div>
     </section>
     <section className="ddu-grid">

@@ -126,6 +126,17 @@ def test_hub_does_not_compare_first_lap_with_stale_game_best():
     assert snapshot[1].last_lap_delta_ms is None
 
 
+def test_hub_refreshes_completed_lap_delta_when_a_lap_matches_the_best():
+    hub = LiveTelemetryHub()
+    hub.publish(telemetry(current_lap=1, lap_distance=0, received_at=100.0))
+    hub.publish(telemetry(current_lap=2, lap_distance=0, last_lap=100_000, received_at=200.0))
+    hub.publish(telemetry(current_lap=3, lap_distance=0, last_lap=105_000, received_at=300.0))
+    assert hub.snapshot()[1].last_lap_delta_ms == 5_000  # type: ignore[index]
+
+    hub.publish(telemetry(current_lap=4, lap_distance=0, last_lap=100_000, received_at=400.0))
+    assert hub.snapshot()[1].last_lap_delta_ms == 0  # type: ignore[index]
+
+
 def test_hub_clears_lap_delta_when_session_restarts():
     hub = LiveTelemetryHub()
     hub.publish(telemetry(current_lap=1, lap_distance=0, received_at=100.0))
