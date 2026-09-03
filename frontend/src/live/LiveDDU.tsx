@@ -68,6 +68,58 @@ function formatLapTime(value: unknown) {
   return `${minutes}:${seconds}.${millis}`
 }
 
+type HotLapClock = { lap: number | null, startedAt: number | null, pausedAt: number | null, pausedMs: number }
+
+function setLiveText(root: HTMLElement, name: string, value: string) {
+  const node = root.querySelector<HTMLElement>(`[data-live="${name}"]`)
+  if (node && node.textContent !== value) node.textContent = value
+}
+
+function updateHotLapClock(clock: HotLapClock, frame: LiveFrame) {
+  if (!finite(frame.lap) || !finite(frame.captured_at) || frame.lap <= 0 || frame.in_race === false) {
+    clock.lap = null
+    clock.startedAt = null
+    clock.pausedAt = null
+    clock.pausedMs = 0
+    return null
+  }
+  if (clock.lap !== frame.lap) {
+    clock.lap = frame.lap
+    clock.startedAt = frame.captured_at
+    clock.pausedAt = null
+    clock.pausedMs = 0
+  }
+  if (frame.paused && clock.pausedAt === null) clock.pausedAt = frame.captured_at
+  if (!frame.paused && clock.pausedAt !== null) {
+    clock.pausedMs += Math.max(0, (frame.captured_at - clock.pausedAt) * 1000)
+    clock.pausedAt = null
+  }
+  if (clock.startedAt === null) return null
+  const activePauseMs = clock.pausedAt === null ? 0 : Math.max(0, (frame.captured_at - clock.pausedAt) * 1000)
+  return Math.max(0, (frame.captured_at - clock.startedAt) * 1000 - clock.pausedMs - activePauseMs)
+}
+
+function applyHotFrame(root: HTMLElement, frame: LiveFrame, clock: HotLapClock) {
+  const rpmLimit = Math.max(
+    finite(frame.rpm_limiter) && frame.rpm_limiter > 0 ? frame.rpm_limiter : 0,
+    finite(frame.rpm_warning) && frame.rpm_warning > 0 ? frame.rpm_warning * 1.08 : 0,
+    finite(frame.rpm) ? frame.rpm : 0,
+    1,
+  )
+  const rpmLevel = Math.max(0, Math.min(1, (frame.rpm || 0) / rpmLimit))
+  root.style.setProperty('--brake-fill', String(clamp(frame.brake_pct) / 100))
+  root.style.setProperty('--throttle-fill', String(clamp(frame.throttle_pct) / 100))
+  root.style.setProperty('--rpm-fill', String(rpmLevel))
+  root.style.setProperty('--rpm-colour', rpmLevel >= .88 ? '#ee594d' : rpmLevel >= .70 ? '#e9c14a' : '#37d985')
+  setLiveText(root, 'brake-pct', numberOrDash(frame.brake_pct))
+  setLiveText(root, 'throttle-pct', numberOrDash(frame.throttle_pct))
+  setLiveText(root, 'rpm', numberOrDash(frame.rpm))
+  setLiveText(root, 'gear', finite(frame.gear) && frame.gear > 0 ? String(frame.gear) : 'N')
+  setLiveText(root, 'suggested-gear', finite(frame.suggested_gear) && frame.suggested_gear > 0 ? String(frame.suggested_gear) : '—')
+  setLiveText(root, 'speed', numberOrDash(frame.speed_kmh))
+  setLiveText(root, 'current-lap-time', formatLapTime(updateHotLapClock(clock, frame)))
+}
+
 function SystemIcon({ type }: { type: 'water' | 'oil' }) {
   if (type === 'water') return <svg className="system-icon" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M12 2.7C8.5 7.1 6.2 10 6.2 13.8A5.8 5.8 0 0 0 12 19.6a5.8 5.8 0 0 0 5.8-5.8C17.8 10 15.5 7.1 12 2.7Z" />
@@ -103,7 +155,7 @@ function Tyre({ label, temperature, slip }: { label: string, temperature: unknow
 
 function PedalBar({ label, value, tone }: { label: string, value: unknown, tone: 'brake' | 'throttle' }) {
   return <div className={`pedal ${tone}`}>
-    <div className="pedal-heading"><span>{label}</span><strong>{numberOrDash(value)}<small>%</small></strong></div>
+    <div className="pedal-heading"><span>{label}</span><strong><span data-live={`${tone}-pct`}>{numberOrDash(value)}</span><small>%</small></strong></div>
     <div className="pedal-track" aria-label={`${label}: ${numberOrDash(value)} percent`}>
       <i />
     </div>
@@ -192,6 +244,9 @@ export default function LiveDDU() {
   const pendingFrame = useRef<LiveFrame | null>(null)
   const animationFrame = useRef<number | null>(null)
   const dashboard = useRef<HTMLElement | null>(null)
+  const hotLapClock = useRef<HotLapClock>({ lap: null, startedAt: null, pausedAt: null, pausedMs: 0 })
+  const lastStaticFrameAt = useRef(0)
+  const staticFrame = useRef<LiveFrame | null>(null)
 
   useEffect(() => {
     document.body.classList.add('live-ddu-body')
@@ -211,26 +266,27 @@ export default function LiveDDU() {
             pendingFrame.current = payload.frame
             setConnection('live')
             setMessage('Receiving GT7 telemetry')
-            if (animationFrame.current === null) animationFrame.current = window.requestAnimationFrame(() => {
+            if (animationFrame.current === null) animationFrame.current = window.requestAnimationFrame((now) => {
               const nextFrame = pendingFrame.current
               const root = dashboard.current
-              if (nextFrame && root) {
-                const rpmLimit = Math.max(
-                  finite(nextFrame.rpm_limiter) && nextFrame.rpm_limiter > 0 ? nextFrame.rpm_limiter : 0,
-                  finite(nextFrame.rpm_warning) && nextFrame.rpm_warning > 0 ? nextFrame.rpm_warning * 1.08 : 0,
-                  finite(nextFrame.rpm) ? nextFrame.rpm : 0,
-                  1,
-                )
-                const rpmLevel = Math.max(0, Math.min(1, (nextFrame.rpm || 0) / rpmLimit))
-                root.style.setProperty('--brake-fill', String(clamp(nextFrame.brake_pct) / 100))
-                root.style.setProperty('--throttle-fill', String(clamp(nextFrame.throttle_pct) / 100))
-                root.style.setProperty('--rpm-fill', String(rpmLevel))
-                root.style.setProperty('--rpm-colour', rpmLevel >= .88 ? '#ee594d' : rpmLevel >= .70 ? '#e9c14a' : '#37d985')
-              }
-              // Preserve the original rAF cadence for all live readouts. The hot
-              // controls above still use GPU-friendly transforms rather than layout.
+              if (nextFrame && root) applyHotFrame(root, nextFrame, hotLapClock.current)
+              const previous = staticFrame.current
+              const mustSyncStatic = !previous
+                || now - lastStaticFrameAt.current >= 125
+                || nextFrame?.lap !== previous?.lap
+                || nextFrame?.in_race !== previous?.in_race
+                || nextFrame?.paused !== previous?.paused
+                || nextFrame?.last_lap_delta_ms !== previous?.last_lap_delta_ms
+                || nextFrame?.track_ready !== previous?.track_ready
+                || Array.isArray(nextFrame?.track_trace)
+              // Static cards avoid a full React reconciliation for every packet.
+              // Hot instruments above still receive every requestAnimationFrame.
               if (nextFrame) {
-                setFrame(nextFrame)
+                if (mustSyncStatic) {
+                  setFrame(nextFrame)
+                  staticFrame.current = nextFrame
+                  lastStaticFrameAt.current = now
+                }
               }
               animationFrame.current = null
             })
@@ -332,7 +388,7 @@ export default function LiveDDU() {
     </header>
     <section className={`speed-rpm-band ${atShift ? 'shift' : ''}`} aria-label={`Speed ${numberOrDash(frame?.speed_kmh)} kilometres per hour`}>
       <div className="band-scale"><i /></div>
-      <div className="band-rpm">{numberOrDash(frame?.rpm)} RPM</div>
+      <div className="band-rpm"><span data-live="rpm">{numberOrDash(frame?.rpm)}</span> RPM</div>
     </section>
     <section className="ddu-grid">
       <aside className="race-card panel">
@@ -341,7 +397,7 @@ export default function LiveDDU() {
           <div className="race-stat position"><span>POSITION</span><strong>{finite(frame?.position) && frame.position > 0 ? frame.position : '—'}<small> / {finite(frame?.total_racers) && frame.total_racers > 0 ? frame.total_racers : '—'}</small></strong></div>
           <div className="race-stat laps"><span>LAPS</span><strong>{finite(frame?.lap) && frame.lap > 0 ? frame.lap : '—'}<small> / {finite(frame?.total_laps) && frame.total_laps > 0 ? frame.total_laps : '—'}</small></strong><em>{numberOrDash(frame?.lap_distance_m, 0)} m</em></div>
           <TrackMap frame={frame} />
-          <div className="current-time lap-time"><strong>{formatLapTime(currentLapMs)}</strong></div>
+          <div className="current-time lap-time"><strong data-live="current-lap-time">{formatLapTime(currentLapMs)}</strong></div>
           <div className="best-time lap-time"><strong>{formatLapTime(frame?.best_lap_ms)}</strong></div>
           <div className="last-time lap-time"><strong>{formatLapTime(frame?.last_lap_ms)}</strong></div>
         </div>
@@ -350,9 +406,9 @@ export default function LiveDDU() {
         <div className="control-composition">
           <PedalBar label="BRAKE" value={frame?.brake_pct} tone="brake" />
           <div className={`gear-rpm ${atShift ? 'shift' : ''}`} aria-label={`RPM ${numberOrDash(frame?.rpm)}`}>
-            <div className="gear-indicators"><div className={`lighting-indicator ${lightState} ${headlightBlink ? 'blink' : ''}`} role="status" aria-label={`Lights: ${lightState}`}><span className="light-icon" aria-hidden="true"><HeadlightIcon /></span></div><div className={`mini-indicator abs ${brakingState}`} aria-label={`ABS: ${brakingState}`}><AbsIcon /></div><div className={`mini-indicator tcs ${tractionState}`} aria-label={`TCS: ${tractionState}`}><TcsIcon /></div></div><div className={`gear`}><strong style={{fontSize: '230px', fontWeight:'300', color: "yellow"}}>{gear}</strong></div>
-            <div><strong style={{fontSize: '40px'}}>{numberOrDash(frame?.speed_kmh).split('').map((digit, index) => <i key={`${digit}-${index}`}>{digit}</i>)}</strong><span>KM/H</span></div>
-            <div className="gear-support"><div className="suggestion"><strong style={{fontWeight: 200, fontSize: '65px', color: 'red'}}>{finite(frame?.suggested_gear) && frame.suggested_gear > 0 && frame.suggested_gear < 15 ? frame.suggested_gear : '—'}</strong></div>{showLapDelta && <div className={`delta ${lastLapDeltaMs > 0 ? 'behind' : 'ahead'}`}><span>DELTA</span><strong>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? 'BEST' : `${lastLapDeltaMs > 0 ? '+' : '−'}${(Math.abs(lastLapDeltaMs) / 1000).toFixed(3)}`}<small>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? '' : 's'}</small></strong></div>}</div>
+            <div className="gear-indicators"><div className={`lighting-indicator ${lightState} ${headlightBlink ? 'blink' : ''}`} role="status" aria-label={`Lights: ${lightState}`}><span className="light-icon" aria-hidden="true"><HeadlightIcon /></span></div><div className={`mini-indicator abs ${brakingState}`} aria-label={`ABS: ${brakingState}`}><AbsIcon /></div><div className={`mini-indicator tcs ${tractionState}`} aria-label={`TCS: ${tractionState}`}><TcsIcon /></div></div><div className={`gear`}><strong data-live="gear" style={{fontSize: '230px', fontWeight:'300', color: "yellow"}}>{gear}</strong></div>
+            <div><strong data-live="speed" style={{fontSize: '40px'}}>{numberOrDash(frame?.speed_kmh)}</strong><span>KM/H</span></div>
+            <div className="gear-support"><div className="suggestion"><strong data-live="suggested-gear" style={{fontWeight: 200, fontSize: '65px', color: 'red'}}>{finite(frame?.suggested_gear) && frame.suggested_gear > 0 && frame.suggested_gear < 15 ? frame.suggested_gear : '—'}</strong></div>{showLapDelta && <div className={`delta ${lastLapDeltaMs > 0 ? 'behind' : 'ahead'}`}><span>DELTA</span><strong>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? 'BEST' : `${lastLapDeltaMs > 0 ? '+' : '−'}${(Math.abs(lastLapDeltaMs) / 1000).toFixed(3)}`}<small>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? '' : 's'}</small></strong></div>}</div>
           </div>
           <PedalBar label="THROTTLE" value={frame?.throttle_pct} tone="throttle" />
         </div>
