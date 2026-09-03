@@ -66,6 +66,21 @@ def test_hub_retains_a_complete_planar_trace_for_new_dashboard_connections():
     assert frame.track_tone == "neutral"
 
 
+def test_hub_completes_the_green_flag_gap_with_the_next_lap_prefix():
+    hub = LiveTelemetryHub()
+    # The first active packet arrives six metres after the line (green flag).
+    hub.publish(telemetry(current_lap=1, lap_distance=6, x=6, y=0, received_at=102.0))
+    hub.publish(telemetry(current_lap=1, lap_distance=15, x=15, y=0, received_at=103.0))
+    # The next lap supplies the real 0m -> 6m prefix before the map is shown.
+    hub.publish(telemetry(current_lap=2, lap_distance=0, x=0, y=0, received_at=104.0))
+    hub.publish(telemetry(current_lap=2, lap_distance=6, x=6, y=0, received_at=105.0))
+
+    snapshot = hub.snapshot()
+    assert snapshot is not None
+    assert snapshot[1].track_ready is True
+    assert snapshot[1].track_trace == [(0.0, 0.0), (6.0, 0.0), (15.0, 0.0), (0.0, 0.0)]
+
+
 def test_hub_colours_the_persistent_trace_only_after_a_valid_lap_comparison():
     hub = LiveTelemetryHub()
     hub.publish(telemetry(current_lap=1, lap_distance=0, x=0, y=0, received_at=100.0))

@@ -161,6 +161,8 @@ class LiveTelemetryHub:
         self._track_tone: Literal["neutral", "fast", "slow"] = "neutral"
         self._track_best_lap_time: int | None = None
         self._track_completed_laps = 0
+        self._track_first_distance_m: float | None = None
+        self._track_prefix_points: list[tuple[float, float]] = []
 
     def _reset_track(self) -> None:
         self._track_points = []
@@ -172,6 +174,8 @@ class LiveTelemetryHub:
         self._track_tone = "neutral"
         self._track_best_lap_time = None
         self._track_completed_laps = 0
+        self._track_first_distance_m = None
+        self._track_prefix_points = []
 
     def _finish_track_lap(self, lap_time: int) -> None:
         """Classify this completed lap against valid laps from the hub session."""
@@ -201,6 +205,17 @@ class LiveTelemetryHub:
             self._track_points = self._track_points[::2]
             self._track_sample_distance_m *= 2
 
+    def _append_track_prefix_point(self, event: TelemetryStat) -> None:
+        x = _finite(event.x)
+        y = _finite(event.y)
+        if x is None or y is None:
+            return
+        point = (float(x), float(y))
+        previous = self._track_prefix_points[-1] if self._track_prefix_points else None
+        if previous is not None and math.hypot(point[0] - previous[0], point[1] - previous[1]) < self._TRACK_SAMPLE_DISTANCE_M:
+            return
+        self._track_prefix_points.append(point)
+
     def _update_track(self, event: TelemetryStat) -> None:
         active = event.in_race and event.current_lap > 0
         if not active:
@@ -214,10 +229,11 @@ class LiveTelemetryHub:
             self._session_active = True
             self._session_id += 1
             self._reset_track()
-            # If the hub joins in the middle of a lap, wait for the next lap boundary
-            # so a partial first segment is never presented as a circuit.
-            if event.lap_distance <= self._TRACK_SAMPLE_DISTANCE_M:
-                self._track_recording_lap = event.current_lap
+            # The green flag can arrive after the car has already travelled past
+            # the line. Record this first partial lap, then use the real start of
+            # the next lap to prepend only the missing prefix.
+            self._track_recording_lap = event.current_lap
+            self._track_first_distance_m = max(0.0, float(event.lap_distance))
 
         previous_lap = self._track_last_lap
         if self._track_recording_lap is None and previous_lap is not None and event.current_lap > previous_lap:
@@ -229,12 +245,24 @@ class LiveTelemetryHub:
                 self._append_track_point(event)
             elif event.current_lap > self._track_recording_lap:
                 if not self._track_ready:
-                    # Keep the first sample of the next lap as the closing point.
-                    # The game does not necessarily emit a sample precisely on the
-                    # finish line during the recorded lap, which otherwise leaves a
-                    # visible gap in every circuit outline.
-                    self._append_track_point(event)
-                    self._track_ready = len(self._track_points) >= 2
+                    first_distance = self._track_first_distance_m or 0.0
+                    if first_distance <= self._TRACK_SAMPLE_DISTANCE_M:
+                        self._append_track_point(event)
+                        self._track_ready = len(self._track_points) >= 2
+                    else:
+                        self._append_track_prefix_point(event)
+                        if event.lap_distance >= first_distance and len(self._track_prefix_points) >= 2:
+                            # Prefix (line -> green flag) and original trace
+                            # (green flag -> line) are both game measurements.
+                            # Reclose at the line without speculative countdown data.
+                            original = self._track_points
+                            if original and math.hypot(
+                                self._track_prefix_points[-1][0] - original[0][0],
+                                self._track_prefix_points[-1][1] - original[0][1],
+                            ) < self._TRACK_SAMPLE_DISTANCE_M:
+                                original = original[1:]
+                            self._track_points = self._track_prefix_points + original + [self._track_prefix_points[0]]
+                            self._track_ready = len(self._track_points) >= 3
                 if previous_lap is not None and event.current_lap > previous_lap:
                     self._finish_track_lap(event.last_lap)
                     self._track_force_snapshot = True
