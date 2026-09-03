@@ -231,6 +231,8 @@ export default function LiveDDU() {
   const [connection, setConnection] = useState<ConnectionState>('connecting')
   const [message, setMessage] = useState('Connecting to the local telemetry API…')
   const [frame, setFrame] = useState<LiveFrame | null>(null)
+  const [recordingEnabled, setRecordingEnabled] = useState(true)
+  const [recordingPending, setRecordingPending] = useState(false)
   const [lapStartedAt, setLapStartedAt] = useState<number | null>(null)
   const [trackedLap, setTrackedLap] = useState<number | null>(null)
   const [pausedAt, setPausedAt] = useState<number | null>(null)
@@ -245,6 +247,31 @@ export default function LiveDDU() {
   const hotLapClock = useRef<HotLapClock>({ lap: null, startedAt: null, pausedAt: null, pausedMs: 0 })
   const lastStaticFrameAt = useRef(0)
   const staticFrame = useRef<LiveFrame | null>(null)
+
+  const recordingUrl = `${window.location.protocol}//${window.location.hostname}:8000/live/recording`
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(recordingUrl)
+      .then((response) => response.ok ? response.json() as Promise<{ enabled?: boolean }> : Promise.reject())
+      .then((settings) => { if (!cancelled && typeof settings.enabled === 'boolean') setRecordingEnabled(settings.enabled) })
+      .catch(() => { /* The dashboard remains usable while the collector starts. */ })
+    return () => { cancelled = true }
+  }, [recordingUrl])
+
+  const toggleRecording = () => {
+    const enabled = !recordingEnabled
+    setRecordingPending(true)
+    fetch(recordingUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
+      .then((response) => response.ok ? response.json() as Promise<{ enabled?: boolean }> : Promise.reject())
+      .then((settings) => { if (typeof settings.enabled === 'boolean') setRecordingEnabled(settings.enabled) })
+      .catch(() => setMessage('Could not change recording preference'))
+      .finally(() => setRecordingPending(false))
+  }
 
   useEffect(() => {
     document.body.classList.add('live-ddu-body')
@@ -378,11 +405,11 @@ export default function LiveDDU() {
   const raceFinished = !!frame && finite(frame.lap) && finite(frame.total_laps) && frame.total_laps > 0 && frame.lap > frame.total_laps
 
   return <main ref={dashboard} className="ddu-shell">
-    {(panelInactive || raceFinished) && <div className="ddu-inactive-overlay" role="status" aria-live="polite"><div>{raceFinished ? <><span className="inactive-icon">✓</span><strong>CORRIDA FINALIZADA!</strong><small>SIGA PARA A TELA DE ANÁLISE PARA VER TODOS OS DETALHES</small></> : <><span className="inactive-icon">◌</span><strong>INICIE UMA CORRIDA</strong><small>PARA ATIVAR O PAINEL</small></>}</div></div>}
+    {(panelInactive || raceFinished) && <div className="ddu-inactive-overlay" role="status" aria-live="polite"><div>{raceFinished ? <><span className="inactive-icon">✓</span><strong>CORRIDA FINALIZADA!</strong><small>SIGA PARA A TELA DE ANÁLISE PARA VER TODOS OS DETALHES</small></> : <><span className="inactive-icon">◌</span><strong>INICIE UMA CORRIDA</strong><button className={`recording-toggle start-screen ${recordingEnabled ? 'enabled' : 'disabled'}`} disabled={recordingPending} onClick={toggleRecording}>{recordingEnabled ? 'RECORDING ON' : 'RECORDING OFF'}</button><small>{recordingEnabled ? 'A PRÓXIMA CORRIDA SERÁ SALVA' : 'LIVE DASHBOARD ONLY · A CORRIDA NÃO SERÁ SALVA'}</small></>}</div></div>}
     <header className="ddu-header">
       <div className="identity"><strong className="live-title">GT7 / LIVE DDU</strong><span className={`connection ${connection}`}><i />{connection}</span></div>
       <span className="connection-message">{message}</span>
-      <nav><a href="/">Recorded analysis</a><button onClick={() => document.documentElement.requestFullscreen?.()}>Full screen</button></nav>
+      <nav><a href="/">Recorded analysis</a><button className={`recording-toggle ${recordingEnabled ? 'enabled' : 'disabled'}`} disabled={recordingPending} onClick={toggleRecording}>{recordingEnabled ? 'RECORDING ON' : 'RECORDING OFF'}</button><button onClick={() => document.documentElement.requestFullscreen?.()}>Full screen</button></nav>
     </header>
     <section className="ddu-grid">
       <aside className="race-card panel">

@@ -17,13 +17,13 @@ def main():
     playstation_ip = os.getenv("GT7_PS_IP", "192.168.100.12")
     playstation_port = int(os.getenv("GT7_PS_PORT", "33740"))
 
+    tracker = Tracker(db=Storage(verbose=True), live_hub=app.state.live_hub)
+    app.state.tracker = tracker
     server = uvicorn.Server(
         uvicorn.Config(app, host=host, port=api_port, log_level="info")
     )
     api_thread = threading.Thread(target=server.run, name="gt7-api", daemon=True)
     api_thread.start()
-
-    tracker = Tracker(db=Storage(verbose=True), live_hub=app.state.live_hub)
     receiver = GT7Receiver(playstation_ip, playstation_port)
     try:
         for event in receiver.stream_events():

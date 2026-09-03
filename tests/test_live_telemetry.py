@@ -181,6 +181,20 @@ def test_tracker_publishes_a_parsed_packet_before_a_race_starts(monkeypatch):
     assert snapshot[1].packet_id == event.package_id
 
 
+def test_tracker_can_keep_live_telemetry_while_recording_is_disabled(monkeypatch):
+    event = telemetry(current_lap=1, in_race=True, total_laps=3)
+    hub = LiveTelemetryHub()
+    tracker = Tracker(db=object(), live_hub=hub)  # type: ignore[arg-type]
+    monkeypatch.setattr(TelemetryStat, "from_bytes", lambda *_args: event)
+
+    assert tracker.set_recording_enabled(False) is False
+    tracker.process_event(b"decrypted GT7 packet")
+
+    assert tracker.race_tracker is None
+    assert hub.snapshot() is not None
+    assert tracker.recording_enabled is False
+
+
 def test_terminal_race_packet_without_captured_laps_does_not_crash_or_restart():
     tracker = Tracker(db=object())  # type: ignore[arg-type]
     before_race = telemetry(current_lap=0, total_laps=1)

@@ -6,6 +6,7 @@ import pandas as pd
 from fastapi import Depends, FastAPI, Query, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from sqlmodel import Session, asc, col, create_engine, desc, select
 
 from src.domain.models import Car, Lap, Race, Track
@@ -34,6 +35,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class RecordingPreference(BaseModel):
+    enabled: bool
+
+
+def get_tracker_or_503():
+    tracker = getattr(app.state, "tracker", None)
+    if tracker is None:
+        raise HTTPException(status_code=503, detail="Collector is starting.")
+    return tracker
+
+
+@app.get("/live/recording")
+def get_live_recording():
+    tracker = get_tracker_or_503()
+    return {"enabled": tracker.recording_enabled}
+
+
+@app.put("/live/recording")
+def set_live_recording(preference: RecordingPreference):
+    tracker = get_tracker_or_503()
+    return {"enabled": tracker.set_recording_enabled(preference.enabled)}
 
 
 @app.websocket("/ws/live")

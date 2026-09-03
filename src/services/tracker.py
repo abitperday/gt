@@ -1,3 +1,4 @@
+import threading
 from typing import Optional
 
 from src.schema.telemetry import TelemetryStat
@@ -19,9 +20,26 @@ class Tracker:
 
         self.all_events: list[TelemetryStat] = []
         self._current_race_type: Optional[RaceType] = None
+        self._recording_enabled = True
+        self._recording_lock = threading.Lock()
 
         # Workaround
         self._waiting_replay_start_lap = False
+
+    @property
+    def recording_enabled(self) -> bool:
+        with self._recording_lock:
+            return self._recording_enabled
+
+    def set_recording_enabled(self, enabled: bool) -> bool:
+        """Enable/disable persistence without interrupting the live telemetry feed."""
+        with self._recording_lock:
+            self._recording_enabled = enabled
+        if not enabled:
+            # A partially recorded session is less useful than no session at all.
+            self.race_tracker = None
+            self._current_race_type = None
+        return enabled
 
     def _is_race_finished(self, event: TelemetryStat) -> bool:
         # Workaround for recording telemetry from a replay.
@@ -83,6 +101,10 @@ class Tracker:
     def _process_parsed_event(self, event: TelemetryStat):
         if self._debug:
             self.all_events.append(event)
+
+        if not self.recording_enabled:
+            self.prev_event = event
+            return
 
         if self.race_tracker is None:
             ### Check start race
