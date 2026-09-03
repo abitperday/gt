@@ -185,9 +185,25 @@
    compositor-friendly transforms; React renders their labels at a lower rate. */
 .pedal.brake .pedal-track i { transform: scaleY(var(--brake-fill, 0)); }
 .pedal.throttle .pedal-track i { transform: scaleY(var(--throttle-fill, 0)); }
-.band-scale i { transform: scaleX(var(--rpm-fill, 0)); background: var(--rpm-colour, #37d985); }
+.band-scale i, .rpm-meter i { transform: scaleX(var(--rpm-fill, 0)); background: var(--rpm-colour, #37d985); }
 
 /* Keep the learned circuit square and north-up rather than stretching a Canvas
    into the card's aspect ratio. */
 .live-track-map svg { width: 100%; min-height: 0; height: 100%; display: block; }
 .track-map-learning { min-height: 0; display: grid; place-items: center; border: 1px dashed #384955; color: #ffb86a; font-size: 9px; font-weight: 700; letter-spacing: .14em; text-align: center; }
+
+/* Driving inputs are intentionally compact: one composited fill each, without
+   per-frame numbers or glow. This leaves the centre display as the focal point. */
+.primary-readout { min-height: 400px; padding: 14px clamp(18px, 3vw, 38px) 28px; }
+.control-composition { grid-template-columns: 48px minmax(210px, 1fr) 48px; gap: clamp(14px, 2.8vw, 34px); }
+.control-composition .pedal { position: relative; align-self: center; display: block; min-width: 48px; height: 33.333%; }
+.pedal-label { position: absolute; z-index: 1; right: 0; bottom: 6px; left: 0; color: #c5d0d7; font-size: 8px; font-weight: 700; letter-spacing: .08em; text-align: center; text-shadow: 0 1px 2px #000; }
+.control-composition .pedal-track { width: 100%; height: 100%; min-height: 0; padding: 2px; border-radius: 2px; background: repeating-linear-gradient(0deg, #10171c 0 8px, #1b262d 8px 10px); }
+.pedal-track i { box-shadow: none !important; }
+.pedal.brake .pedal-track i { background: #e64a45; }.pedal.throttle .pedal-track i { background: #36cb6a; }
+.gear-rpm { grid-template-rows: auto auto 1fr auto auto; min-height: 320px; }
+.rpm-meter { position: relative; width: min(100%, 384px); height: 10px; margin: 0 auto 3px; overflow: hidden; border: 1px solid #36424a; background: repeating-linear-gradient(90deg, #1a252b 0 7px, #0b1115 7px 9px); contain: layout paint; }
+.rpm-meter i { display: block; width: 100%; height: 100%; transform-origin: left center; will-change: transform; }
+.rpm-meter span { position: absolute; right: 4px; top: 12px; color: #7d8b93; font-size: 9px; font-weight: 700; letter-spacing: .1em; }
+.rpm-meter b { color: #ccd7d9; font-variant-numeric: tabular-nums; }
+@media (orientation: landscape) and (max-width: 900px) { .primary-readout { min-height: 230px; padding: 7px 10px 21px; }.control-composition { grid-template-columns: 34px minmax(160px, 1fr) 34px; gap: 10px; }.control-composition .pedal { min-width: 34px; height: 33.333%; }.gear-rpm { min-height: 210px; }.rpm-meter { height: 7px; width: min(100%, 264px); }.rpm-meter span { display: none; }.pedal-label { display: none; } }

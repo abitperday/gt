@@ -229,6 +229,11 @@ class LiveTelemetryHub:
                 self._append_track_point(event)
             elif event.current_lap > self._track_recording_lap:
                 if not self._track_ready:
+                    # Keep the first sample of the next lap as the closing point.
+                    # The game does not necessarily emit a sample precisely on the
+                    # finish line during the recorded lap, which otherwise leaves a
+                    # visible gap in every circuit outline.
+                    self._append_track_point(event)
                     self._track_ready = len(self._track_points) >= 2
                 if previous_lap is not None and event.current_lap > previous_lap:
                     self._finish_track_lap(event.last_lap)

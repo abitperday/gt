@@ -62,7 +62,7 @@ def test_hub_retains_a_complete_planar_trace_for_new_dashboard_connections():
     frame = snapshot[1]
     assert frame.session_id == 1
     assert frame.track_ready is True
-    assert frame.track_trace == [(0.0, 0.0), (10.0, 0.0)]
+    assert frame.track_trace == [(0.0, 0.0), (10.0, 0.0), (0.0, 0.0)]
     assert frame.track_tone == "neutral"
 
 
@@ -90,7 +90,7 @@ def test_hub_can_restore_the_server_held_trace_without_resending_it_per_frame():
     latest = hub.snapshot()
     restored = hub.snapshot(include_track=True)
     assert latest is not None and latest[1].track_trace is None
-    assert restored is not None and restored[1].track_trace == [(0.0, 0.0), (10.0, 0.0)]
+    assert restored is not None and restored[1].track_trace == [(0.0, 0.0), (10.0, 0.0), (0.0, 0.0)]
 
 
 def test_hub_is_latest_wins_without_a_packet_backlog():

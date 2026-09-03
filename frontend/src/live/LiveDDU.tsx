@@ -111,8 +111,6 @@ function applyHotFrame(root: HTMLElement, frame: LiveFrame, clock: HotLapClock) 
   root.style.setProperty('--throttle-fill', String(clamp(frame.throttle_pct) / 100))
   root.style.setProperty('--rpm-fill', String(rpmLevel))
   root.style.setProperty('--rpm-colour', rpmLevel >= .88 ? '#ee594d' : rpmLevel >= .70 ? '#e9c14a' : '#37d985')
-  setLiveText(root, 'brake-pct', numberOrDash(frame.brake_pct))
-  setLiveText(root, 'throttle-pct', numberOrDash(frame.throttle_pct))
   setLiveText(root, 'rpm', numberOrDash(frame.rpm))
   setLiveText(root, 'gear', finite(frame.gear) && frame.gear > 0 ? String(frame.gear) : 'N')
   setLiveText(root, 'suggested-gear', finite(frame.suggested_gear) && frame.suggested_gear > 0 ? String(frame.suggested_gear) : '—')
@@ -155,7 +153,7 @@ function Tyre({ label, temperature, slip }: { label: string, temperature: unknow
 
 function PedalBar({ label, value, tone }: { label: string, value: unknown, tone: 'brake' | 'throttle' }) {
   return <div className={`pedal ${tone}`}>
-    <div className="pedal-heading"><span>{label}</span><strong><span data-live={`${tone}-pct`}>{numberOrDash(value)}</span><small>%</small></strong></div>
+    <span className="pedal-label">{label}</span>
     <div className="pedal-track" aria-label={`${label}: ${numberOrDash(value)} percent`}>
       <i />
     </div>
@@ -386,10 +384,6 @@ export default function LiveDDU() {
       <span className="connection-message">{message}</span>
       <nav><a href="/">Recorded analysis</a><button onClick={() => document.documentElement.requestFullscreen?.()}>Full screen</button></nav>
     </header>
-    <section className={`speed-rpm-band ${atShift ? 'shift' : ''}`} aria-label={`Speed ${numberOrDash(frame?.speed_kmh)} kilometres per hour`}>
-      <div className="band-scale"><i /></div>
-      <div className="band-rpm"><span data-live="rpm">{numberOrDash(frame?.rpm)}</span> RPM</div>
-    </section>
     <section className="ddu-grid">
       <aside className="race-card panel">
         {/* <div className="panel-heading"><span>RACE CONTEXT</span><b>{frame?.in_race ? 'ON TRACK' : 'SESSION'}</b></div>/ */}
@@ -406,6 +400,7 @@ export default function LiveDDU() {
         <div className="control-composition">
           <PedalBar label="BRAKE" value={frame?.brake_pct} tone="brake" />
           <div className={`gear-rpm ${atShift ? 'shift' : ''}`} aria-label={`RPM ${numberOrDash(frame?.rpm)}`}>
+            <div className="rpm-meter" aria-label={`RPM ${numberOrDash(frame?.rpm)}`}><i /><span><b data-live="rpm">{numberOrDash(frame?.rpm)}</b> RPM</span></div>
             <div className="gear-indicators"><div className={`lighting-indicator ${lightState} ${headlightBlink ? 'blink' : ''}`} role="status" aria-label={`Lights: ${lightState}`}><span className="light-icon" aria-hidden="true"><HeadlightIcon /></span></div><div className={`mini-indicator abs ${brakingState}`} aria-label={`ABS: ${brakingState}`}><AbsIcon /></div><div className={`mini-indicator tcs ${tractionState}`} aria-label={`TCS: ${tractionState}`}><TcsIcon /></div></div><div className={`gear`}><strong data-live="gear" style={{fontSize: '230px', fontWeight:'300', color: "yellow"}}>{gear}</strong></div>
             <div><strong data-live="speed" style={{fontSize: '40px'}}>{numberOrDash(frame?.speed_kmh)}</strong><span>KM/H</span></div>
             <div className="gear-support"><div className="suggestion"><strong data-live="suggested-gear" style={{fontWeight: 200, fontSize: '65px', color: 'red'}}>{finite(frame?.suggested_gear) && frame.suggested_gear > 0 && frame.suggested_gear < 15 ? frame.suggested_gear : '—'}</strong></div>{showLapDelta && <div className={`delta ${lastLapDeltaMs > 0 ? 'behind' : 'ahead'}`}><span>DELTA</span><strong>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? 'BEST' : `${lastLapDeltaMs > 0 ? '+' : '−'}${(Math.abs(lastLapDeltaMs) / 1000).toFixed(3)}`}<small>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? '' : 's'}</small></strong></div>}</div>
