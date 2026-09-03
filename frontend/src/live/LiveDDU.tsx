@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import './LiveDDU.css'
 
 type ConnectionState = 'connecting' | 'waiting' | 'live' | 'stale'
@@ -112,26 +112,15 @@ function PedalBar({ label, value, tone }: { label: string, value: unknown, tone:
 
 type TrackPoint = { x: number, y: number }
 type TrackTone = 'neutral' | 'fast' | 'slow'
-type TrackGeometry = { project: (point: TrackPoint) => TrackPoint, points: TrackPoint[] }
-const TRACK_CANVAS_SIZE = 512
+type TrackGeometry = { path: string, project: (point: TrackPoint) => TrackPoint }
 
-function clearCanvas(canvas: HTMLCanvasElement | null) {
-  if (!canvas) return null
-  if (canvas.width !== TRACK_CANVAS_SIZE || canvas.height !== TRACK_CANVAS_SIZE) {
-    canvas.width = TRACK_CANVAS_SIZE
-    canvas.height = TRACK_CANVAS_SIZE
-  }
-  const context = canvas.getContext('2d')
-  context?.clearRect(0, 0, TRACK_CANVAS_SIZE, TRACK_CANVAS_SIZE)
-  return context
-}
+const TrackTrace = memo(function TrackTrace({ geometry, tone }: { geometry: TrackGeometry | null, tone: TrackTone }) {
+  return geometry?.path ? <polyline points={geometry.path} className={`track-line ${tone}`} /> : null
+})
 
 function TrackMap({ frame }: { frame: LiveFrame | null }) {
   const [trace, setTrace] = useState<TrackPoint[]>([])
-  const [geometry, setGeometry] = useState<TrackGeometry | null>(null)
   const traceSession = useRef<number | null>(null)
-  const staticCanvas = useRef<HTMLCanvasElement | null>(null)
-  const markerCanvas = useRef<HTMLCanvasElement | null>(null)
 
   useEffect(() => {
     const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
@@ -139,13 +128,11 @@ function TrackMap({ frame }: { frame: LiveFrame | null }) {
     if (!active) {
       traceSession.current = null
       setTrace([])
-      setGeometry(null)
       return
     }
     if (traceSession.current !== session) {
       traceSession.current = session
       setTrace([])
-      setGeometry(null)
     }
     if (frame.track_ready && Array.isArray(frame.track_trace)) {
       setTrace(frame.track_trace.flatMap(([x, y]) => finite(x) && finite(y) ? [{ x, y }] : []))
@@ -153,57 +140,23 @@ function TrackMap({ frame }: { frame: LiveFrame | null }) {
   }, [frame?.in_race, frame?.lap, frame?.session_id, frame?.track_ready, frame?.track_trace])
 
   const ready = !!frame?.track_ready
-  const tone: TrackTone = frame?.track_tone === 'fast' || frame?.track_tone === 'slow' ? frame.track_tone : 'neutral'
-
-  useEffect(() => {
-    if (!trace.length) {
-      setGeometry(null)
-      return
-    }
-    // This runs only for a server trail snapshot. GT7's horizontal plane is X/Y;
-    // Z is elevation and must not be used for the circuit projection.
+  // The SVG keeps a square, north-up view. It is recalculated only when the hub
+  // publishes a new trail snapshot, never when the live marker moves.
+  const geometry = useMemo<TrackGeometry | null>(() => {
+    if (!trace.length) return null
     const minX = Math.min(...trace.map((point) => point.x))
     const maxX = Math.max(...trace.map((point) => point.x))
     const minY = Math.min(...trace.map((point) => point.y))
     const maxY = Math.max(...trace.map((point) => point.y))
     const span = Math.max(maxX - minX, maxY - minY, 1)
     const project = (point: TrackPoint) => ({
-      x: TRACK_CANVAS_SIZE / 2 + ((point.x - (minX + maxX) / 2) / span) * TRACK_CANVAS_SIZE * .41,
-      y: TRACK_CANVAS_SIZE / 2 - ((point.y - (minY + maxY) / 2) / span) * TRACK_CANVAS_SIZE * .41,
+      x: 50 + ((point.x - (minX + maxX) / 2) / span) * 82,
+      y: 50 - ((point.y - (minY + maxY) / 2) / span) * 82,
     })
-    setGeometry({ points: trace.map(project), project })
+    return { path: trace.map(project).map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' '), project }
   }, [trace])
-
-  useEffect(() => {
-    const context = clearCanvas(staticCanvas.current)
-    if (!context || !geometry) return
-    context.fillStyle = '#071015'
-    context.fillRect(0, 0, TRACK_CANVAS_SIZE, TRACK_CANVAS_SIZE)
-    context.strokeStyle = '#263640'
-    context.lineWidth = 3
-    context.strokeRect(10, 10, TRACK_CANVAS_SIZE - 20, TRACK_CANVAS_SIZE - 20)
-    context.strokeStyle = tone === 'fast' ? '#48d983' : tone === 'slow' ? '#f15d56' : '#e6edf0'
-    context.lineWidth = 6
-    context.lineCap = 'round'
-    context.lineJoin = 'round'
-    context.beginPath()
-    geometry.points.forEach((point, index) => index ? context.lineTo(point.x, point.y) : context.moveTo(point.x, point.y))
-    context.stroke()
-  }, [geometry, tone])
-
-  useEffect(() => {
-    const context = clearCanvas(markerCanvas.current)
-    if (!context || !geometry || !ready || !finite(frame?.position_x) || !finite(frame?.position_y)) return
-    const marker = geometry.project({ x: frame.position_x, y: frame.position_y })
-    context.fillStyle = '#ff692e'
-    context.beginPath()
-    context.arc(marker.x, marker.y, 18, 0, Math.PI * 2)
-    context.fill()
-    context.fillStyle = '#fff7e8'
-    context.beginPath()
-    context.arc(marker.x, marker.y, 8, 0, Math.PI * 2)
-    context.fill()
-  }, [frame?.position_x, frame?.position_y, geometry, ready])
+  const marker = finite(frame?.position_x) && finite(frame?.position_y) && geometry ? geometry.project({ x: frame.position_x, y: frame.position_y }) : null
+  const tone: TrackTone = frame?.track_tone === 'fast' || frame?.track_tone === 'slow' ? frame.track_tone : 'neutral'
 
   const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
   const status = !active
@@ -218,7 +171,7 @@ function TrackMap({ frame }: { frame: LiveFrame | null }) {
   return <section className="live-track-map" aria-label="Live circuit map">
     <div className="track-map-heading"><span>TRACK MAP</span><b className={state}>{status}</b></div>
     {ready && geometry
-      ? <div className="track-canvas-stack" role="img" aria-label={`Circuit trace: ${tone}`}><canvas ref={staticCanvas} /><canvas ref={markerCanvas} /></div>
+      ? <svg viewBox="0 0 100 100" role="img" aria-label={`Circuit trace: ${tone}`} preserveAspectRatio="xMidYMid meet"><rect x="2" y="2" width="96" height="96" rx="4" className="track-map-frame" /><TrackTrace geometry={geometry} tone={tone} />{marker && <g className="track-marker" transform={`translate(${marker.x} ${marker.y})`}><circle r="4.6" /><circle r="2.25" /></g>}</svg>
       : <div className="track-map-learning">MAPPING THE CIRCUIT…</div>}
     <small>{ready ? 'Persistent full-lap trace · live position' : 'Position will appear after the first complete lap'}</small>
   </section>
@@ -238,7 +191,6 @@ export default function LiveDDU() {
   const blinkTimer = useRef<number | null>(null)
   const pendingFrame = useRef<LiveFrame | null>(null)
   const animationFrame = useRef<number | null>(null)
-  const lastStateFrameAt = useRef(0)
   const dashboard = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
@@ -259,7 +211,7 @@ export default function LiveDDU() {
             pendingFrame.current = payload.frame
             setConnection('live')
             setMessage('Receiving GT7 telemetry')
-            if (animationFrame.current === null) animationFrame.current = window.requestAnimationFrame((now) => {
+            if (animationFrame.current === null) animationFrame.current = window.requestAnimationFrame(() => {
               const nextFrame = pendingFrame.current
               const root = dashboard.current
               if (nextFrame && root) {
@@ -275,10 +227,10 @@ export default function LiveDDU() {
                 root.style.setProperty('--rpm-fill', String(rpmLevel))
                 root.style.setProperty('--rpm-colour', rpmLevel >= .88 ? '#ee594d' : rpmLevel >= .70 ? '#e9c14a' : '#37d985')
               }
-              // Controls update every packet; the rest of the React tree updates at 10 Hz.
-              if (nextFrame && now - lastStateFrameAt.current >= 100) {
+              // Preserve the original rAF cadence for all live readouts. The hot
+              // controls above still use GPU-friendly transforms rather than layout.
+              if (nextFrame) {
                 setFrame(nextFrame)
-                lastStateFrameAt.current = now
               }
               animationFrame.current = null
             })
