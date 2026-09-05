@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { FuelGauge, TurboGauge } from './InstrumentGauges'
 import './LiveDDU.css'
 
 type ConnectionState = 'connecting' | 'waiting' | 'live' | 'stale'
@@ -35,6 +36,7 @@ interface LiveFrame {
   fuel_l?: number | null
   fuel_capacity_l?: number | null
   boost?: number | null
+  has_turbo?: boolean
   oil_pressure?: number | null
   oil_temp_c?: number | null
   water_temp_c?: number | null
@@ -111,9 +113,15 @@ function applyHotFrame(root: HTMLElement, frame: LiveFrame, clock: HotLapClock) 
   root.style.setProperty('--throttle-fill', String(clamp(frame.throttle_pct) / 100))
   root.style.setProperty('--rpm-fill', String(rpmLevel))
   root.style.setProperty('--rpm-colour', rpmLevel >= .88 ? '#ee594d' : rpmLevel >= .70 ? '#e9c14a' : '#37d985')
+  if (finite(frame.boost)) {
+    root.style.setProperty('--turbo-angle', `${(Math.max(-1, Math.min(2, frame.boost)) - 1) * 90}deg`)
+  } else {
+    root.style.removeProperty('--turbo-angle')
+  }
+  setLiveText(root, 'turbo-pressure', finite(frame.boost) ? (frame.boost * 100).toFixed(0) : '—')
   setLiveText(root, 'rpm', numberOrDash(frame.rpm))
   setLiveText(root, 'gear', finite(frame.gear) && frame.gear > 0 ? String(frame.gear) : 'N')
-  setLiveText(root, 'suggested-gear', finite(frame.suggested_gear) && frame.suggested_gear > 0 ? String(frame.suggested_gear) : '—')
+  setLiveText(root, 'suggested-gear', finite(frame.suggested_gear) && frame.suggested_gear > 0 && frame.suggested_gear < 15 ? String(frame.suggested_gear) : '—')
   setLiveText(root, 'speed', numberOrDash(frame.speed_kmh))
   setLiveText(root, 'current-lap-time', formatLapTime(updateHotLapClock(clock, frame)))
 }
@@ -171,10 +179,12 @@ const TrackTrace = memo(function TrackTrace({ geometry, tone }: { geometry: Trac
 function TrackMap({ frame }: { frame: LiveFrame | null }) {
   const [trace, setTrace] = useState<TrackPoint[]>([])
   const traceSession = useRef<number | null>(null)
+  const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
+  const session = finite(frame?.session_id) ? frame.session_id : null
+  const traceReady = frame?.track_ready === true
+  const incomingTrace = frame?.track_trace
 
   useEffect(() => {
-    const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
-    const session = finite(frame?.session_id) ? frame.session_id : null
     if (!active) {
       traceSession.current = null
       setTrace([])
@@ -184,12 +194,13 @@ function TrackMap({ frame }: { frame: LiveFrame | null }) {
       traceSession.current = session
       setTrace([])
     }
-    if (frame.track_ready && Array.isArray(frame.track_trace)) {
-      setTrace(frame.track_trace.flatMap(([x, y]) => finite(x) && finite(y) ? [{ x, y }] : []))
+    if (traceReady && Array.isArray(incomingTrace)) {
+      setTrace(incomingTrace.flatMap(([x, y]) => finite(x) && finite(y) ? [{ x, y }] : []))
     }
-  }, [frame?.in_race, frame?.lap, frame?.session_id, frame?.track_ready, frame?.track_trace])
+  }, [active, session, traceReady, incomingTrace])
 
-  const ready = !!frame?.track_ready
+  const ready = active && traceReady && trace.length > 1
+  const completingStart = active && !ready && finite(frame?.lap) && finite(frame?.track_recording_lap) && frame.lap > frame.track_recording_lap
   // The SVG keeps a square, north-up view. It is recalculated only when the hub
   // publishes a new trail snapshot, never when the live marker moves.
   const geometry = useMemo<TrackGeometry | null>(() => {
@@ -208,22 +219,23 @@ function TrackMap({ frame }: { frame: LiveFrame | null }) {
   const marker = finite(frame?.position_x) && finite(frame?.position_y) && geometry ? geometry.project({ x: frame.position_x, y: frame.position_y }) : null
   const tone: TrackTone = frame?.track_tone === 'fast' || frame?.track_tone === 'slow' ? frame.track_tone : 'neutral'
 
-  const active = !!frame && frame.in_race !== false && finite(frame.lap) && frame.lap > 0
   const status = !active
     ? 'WAITING FOR TELEMETRY'
     : ready
         ? 'TRACE READY'
-        : finite(frame?.track_recording_lap)
-          ? `LEARNING LAP ${frame.track_recording_lap}`
-          : 'WAITING FOR LAP START'
+        : completingStart
+          ? 'COMPLETING START'
+          : finite(frame?.track_recording_lap)
+            ? `LEARNING LAP ${frame.track_recording_lap}`
+            : 'WAITING FOR LAP START'
   const state = ready ? 'ready' : 'recording'
 
   return <section className="live-track-map" aria-label="Live circuit map">
     <div className="track-map-heading"><span>TRACK MAP</span><b className={state}>{status}</b></div>
     {ready && geometry
       ? <svg viewBox="0 0 100 100" role="img" aria-label={`Circuit trace: ${tone}`} preserveAspectRatio="xMidYMid meet"><rect x="2" y="2" width="96" height="96" rx="4" className="track-map-frame" /><TrackTrace geometry={geometry} tone={tone} />{marker && <g className="track-marker" transform={`translate(${marker.x} ${marker.y})`}><circle r="4.6" /><circle r="2.25" /></g>}</svg>
-      : <div className="track-map-learning">MAPPING THE CIRCUIT…</div>}
-    <small>{ready ? 'Persistent full-lap trace · live position' : 'Position will appear after the first complete lap'}</small>
+      : <div className="track-map-learning">{completingStart ? 'CAPTURING THE MISSING START…' : 'MAPPING THE CIRCUIT…'}</div>}
+    <small>{ready ? 'Persistent full-lap trace · live position' : completingStart ? 'Using the start of this lap to complete the circuit' : 'The next lap will fill the missing start segment'}</small>
   </section>
 }
 
@@ -301,6 +313,8 @@ export default function LiveDDU() {
                 || nextFrame?.lap !== previous?.lap
                 || nextFrame?.in_race !== previous?.in_race
                 || nextFrame?.paused !== previous?.paused
+                || nextFrame?.has_turbo !== previous?.has_turbo
+                || finite(nextFrame?.boost) !== finite(previous?.boost)
                 || nextFrame?.last_lap_delta_ms !== previous?.last_lap_delta_ms
                 || nextFrame?.track_ready !== previous?.track_ready
                 || Array.isArray(nextFrame?.track_trace)
@@ -391,9 +405,6 @@ export default function LiveDDU() {
   const lastLapDeltaMs = finite(frame?.last_lap_delta_ms) ? frame.last_lap_delta_ms : null
   const showLapDelta = finite(frame?.lap) && frame.lap > 2 && frame?.in_race !== false && lastLapDeltaMs !== null
   const atShift = finite(frame?.rpm_warning) && frame.rpm_warning > 0 && (frame?.rpm || 0) >= frame.rpm_warning
-  const fuelPercent = finite(frame?.fuel_l) && finite(frame?.fuel_capacity_l) && frame.fuel_capacity_l > 0 ? Math.max(0, Math.min(100, frame.fuel_l / frame.fuel_capacity_l * 100)) : null
-  const fuelState = fuelPercent === null ? 'unknown' : fuelPercent <= 10 ? 'critical' : fuelPercent <= 30 ? 'reserve' : 'normal'
-  const fuelLabel = fuelState === 'critical' ? 'LOW FUEL' : fuelState === 'reserve' ? 'RESERVE' : 'FUEL'
   const slips = useMemo(() => [frame?.tyre_slip_fl, frame?.tyre_slip_fr, frame?.tyre_slip_rl, frame?.tyre_slip_rr].filter(finite), [frame])
   const lockup = (frame?.speed_kmh || 0) >= 20 && (frame?.brake_pct || 0) >= 15 && slips.some((slip) => slip <= -0.18)
   const wheelspin = (frame?.speed_kmh || 0) >= 10 && (frame?.throttle_pct || 0) >= 20 && slips.some((slip) => slip >= 0.18)
@@ -427,10 +438,13 @@ export default function LiveDDU() {
         <div className="control-composition">
           <PedalBar label="BRAKE" value={frame?.brake_pct} tone="brake" />
           <div className={`gear-rpm ${atShift ? 'shift' : ''}`} aria-label={`RPM ${numberOrDash(frame?.rpm)}`}>
-            <div className="rpm-meter" aria-label={`RPM ${numberOrDash(frame?.rpm)}`}><i /><span><b data-live="rpm">{numberOrDash(frame?.rpm)}</b> RPM</span></div>
-            <div className="gear-indicators"><div className={`lighting-indicator ${lightState} ${headlightBlink ? 'blink' : ''}`} role="status" aria-label={`Lights: ${lightState}`}><span className="light-icon" aria-hidden="true"><HeadlightIcon /></span></div><div className={`mini-indicator abs ${brakingState}`} aria-label={`ABS: ${brakingState}`}><AbsIcon /></div><div className={`mini-indicator tcs ${tractionState}`} aria-label={`TCS: ${tractionState}`}><TcsIcon /></div></div><div className={`gear`}><strong data-live="gear" style={{fontSize: '230px', fontWeight:'300', color: "yellow"}}>{gear}</strong></div>
-            <div><strong data-live="speed" style={{fontSize: '40px'}}>{numberOrDash(frame?.speed_kmh)}</strong><span>KM/H</span></div>
-            <div className="gear-support"><div className="suggestion"><strong data-live="suggested-gear" style={{fontWeight: 200, fontSize: '65px', color: 'red'}}>{finite(frame?.suggested_gear) && frame.suggested_gear > 0 && frame.suggested_gear < 15 ? frame.suggested_gear : '—'}</strong></div>{showLapDelta && <div className={`delta ${lastLapDeltaMs > 0 ? 'behind' : 'ahead'}`}><span>DELTA</span><strong>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? 'BEST' : `${lastLapDeltaMs > 0 ? '+' : '−'}${(Math.abs(lastLapDeltaMs) / 1000).toFixed(3)}`}<small>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? '' : 's'}</small></strong></div>}</div>
+            <div className="gear-indicators"><div className={`lighting-indicator ${lightState} ${headlightBlink ? 'blink' : ''}`} role="status" aria-label={`Lights: ${lightState}`}><span className="light-icon" aria-hidden="true"><HeadlightIcon /></span></div><div className={`mini-indicator abs ${brakingState}`} aria-label={`ABS: ${brakingState}`}><AbsIcon /></div><div className={`mini-indicator tcs ${tractionState}`} aria-label={`TCS: ${tractionState}`}><TcsIcon /></div></div><div className="gear"><strong data-live="gear">{gear}</strong></div>
+            <div className="driving-speed"><strong data-live="speed">{numberOrDash(frame?.speed_kmh)}</strong><span>KM/H</span></div>
+            <div className="rpm-readout" aria-label={`RPM ${numberOrDash(frame?.rpm)}`}>
+              <div className="rpm-meter" aria-hidden="true"><i /></div>
+              <span><b data-live="rpm">{numberOrDash(frame?.rpm)}</b> RPM</span>
+            </div>
+            <div className="gear-support"><div className="suggestion"><strong data-live="suggested-gear">{finite(frame?.suggested_gear) && frame.suggested_gear > 0 && frame.suggested_gear < 15 ? frame.suggested_gear : '—'}</strong></div>{showLapDelta && <div className={`delta ${lastLapDeltaMs > 0 ? 'behind' : 'ahead'}`}><span>DELTA</span><strong>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? 'BEST' : `${lastLapDeltaMs > 0 ? '+' : '−'}${(Math.abs(lastLapDeltaMs) / 1000).toFixed(3)}`}<small>{lastLapDeltaMs < 0 && bestDisplay === 'best' ? '' : 's'}</small></strong></div>}</div>
           </div>
           <PedalBar label="THROTTLE" value={frame?.throttle_pct} tone="throttle" />
         </div>
@@ -438,12 +452,13 @@ export default function LiveDDU() {
       </section>
       <aside className="systems-card panel">
         <div className="panel-heading"><span>VEHICLE STATE</span><b>{frame?.paused ? 'PAUSED' : 'LIVE'}</b></div>
-        <div className={`fuel ${fuelState}`}><div className="fuel-title"><span>{fuelLabel}</span><strong>{numberOrDash(frame?.fuel_l, 1)} <small>L</small></strong></div><div className="fuel-track"><i style={{ width: `${fuelPercent || 0}%` }} /></div><small>{fuelPercent === null ? 'capacity unavailable' : `${fuelPercent.toFixed(0)}% · ${numberOrDash(frame?.fuel_capacity_l, 1)} L capacity`}</small></div>
+        <FuelGauge fuelLitres={frame?.fuel_l} capacityLitres={frame?.fuel_capacity_l} />
         <section className="systems-tyres" style={{marginBottom: '10px'}}><div className="panel-heading"></div><div className="tyre-car" aria-label="Tyre temperature layout"><Tyre label="FL" temperature={frame?.tyre_temp_fl_c} slip={frame?.tyre_slip_fl} /><div className="car-outline" aria-hidden="true"><i /></div><Tyre label="FR" temperature={frame?.tyre_temp_fr_c} slip={frame?.tyre_slip_fr} /><Tyre label="RL" temperature={frame?.tyre_temp_rl_c} slip={frame?.tyre_slip_rl} /><Tyre label="RR" temperature={frame?.tyre_temp_rr_c} slip={frame?.tyre_slip_rr} /></div></section>
         <div className="system-readings">
           <div className="system-reading water"><SystemIcon type="water" /><span>WATER</span><strong>{numberOrDash(frame?.water_temp_c, 0)}<small>°C</small></strong></div>
           <div className="system-reading oil"><SystemIcon type="oil" /><span>OIL</span><strong>{numberOrDash(frame?.oil_temp_c, 0)}<small>°C</small></strong><em>{numberOrDash(frame?.oil_pressure, 1)} pressure</em></div>
         </div>
+        {frame?.has_turbo === true && <TurboGauge boost={frame.boost} />}
       </aside>
     </section>
     {/* <footer>Raw live GT7 measurements · No live delta or coaching · Slip alerts require measured slip plus driver input</footer> */}

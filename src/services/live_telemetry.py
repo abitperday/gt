@@ -47,6 +47,8 @@ class LiveFrame(BaseModel):
     track_tone: Literal["neutral", "fast", "slow"] = "neutral"
     fuel_l: float | None
     fuel_capacity_l: float | None
+    has_turbo: bool = False
+    # Gauge pressure in bar (×100 kPa).
     boost: float | None
     oil_pressure: float | None
     oil_temp_c: float | None
@@ -110,6 +112,7 @@ class LiveFrame(BaseModel):
             track_tone=track_tone,
             fuel_l=_finite(event.fuel_current),
             fuel_capacity_l=_finite(event.fuel_capacity),
+            has_turbo=event.has_turbo,
             boost=_finite(event.boost),
             oil_pressure=_finite(event.oil_pressure),
             oil_temp_c=_finite(event.oil_temp),
@@ -136,6 +139,8 @@ class LiveTelemetryHub:
     _TRACK_SAMPLE_DISTANCE_M = 2.0
     _TRACK_MAX_POINTS = 3_000
     _TRACK_SNAPSHOT_INTERVAL_S = 2.0
+    _TRACK_JOIN_DISTANCE_M = 12.0
+    _TRACK_JOIN_PREFIX_M = 40.0
 
     def __init__(self):
         self._condition = threading.Condition()
@@ -161,8 +166,10 @@ class LiveTelemetryHub:
         self._track_tone: Literal["neutral", "fast", "slow"] = "neutral"
         self._track_best_lap_time: int | None = None
         self._track_completed_laps = 0
-        self._track_first_distance_m: float | None = None
         self._track_prefix_points: list[tuple[float, float]] = []
+        self._track_prefix_lap: int | None = None
+        self._track_join_point_count = 0
+        self._track_prefix_sample_distance_m = self._TRACK_SAMPLE_DISTANCE_M
 
     def _reset_track(self) -> None:
         self._track_points = []
@@ -174,8 +181,10 @@ class LiveTelemetryHub:
         self._track_tone = "neutral"
         self._track_best_lap_time = None
         self._track_completed_laps = 0
-        self._track_first_distance_m = None
         self._track_prefix_points = []
+        self._track_prefix_lap = None
+        self._track_join_point_count = 0
+        self._track_prefix_sample_distance_m = self._TRACK_SAMPLE_DISTANCE_M
 
     def _finish_track_lap(self, lap_time: int) -> None:
         """Classify this completed lap against valid laps from the hub session."""
@@ -212,9 +221,84 @@ class LiveTelemetryHub:
             return
         point = (float(x), float(y))
         previous = self._track_prefix_points[-1] if self._track_prefix_points else None
-        if previous is not None and math.hypot(point[0] - previous[0], point[1] - previous[1]) < self._TRACK_SAMPLE_DISTANCE_M:
+        if previous is not None and math.hypot(point[0] - previous[0], point[1] - previous[1]) < self._track_prefix_sample_distance_m:
             return
         self._track_prefix_points.append(point)
+        if len(self._track_prefix_points) > self._TRACK_MAX_POINTS:
+            self._track_prefix_points = self._track_prefix_points[::2]
+            self._track_prefix_sample_distance_m *= 2
+
+    def _complete_track(self, points: list[tuple[float, float]]) -> None:
+        if len(points) < 3:
+            return
+        if points[-1] != points[0]:
+            points.append(points[0])
+        while len(points) > self._TRACK_MAX_POINTS:
+            last = points[-1]
+            points = points[::2]
+            if points[-1] != last:
+                points.append(last)
+        self._track_points = points
+        self._track_ready = True
+        self._track_force_snapshot = True
+        self._track_prefix_points = []
+
+    def _join_track_prefix(self) -> None:
+        """Join measured lap-start geometry only after reaching the first trace."""
+        original = self._track_points
+        prefix = self._track_prefix_points
+        if not prefix or self._track_join_point_count < 2:
+            return
+        point = prefix[-1]
+        if math.hypot(point[0] - original[0][0], point[1] - original[0][1]) <= self._TRACK_SAMPLE_DISTANCE_M:
+            self._complete_track(prefix + original[1:])
+            return
+        if len(prefix) < 2:
+            return
+        movement = (point[0] - prefix[-2][0], point[1] - prefix[-2][1])
+        distance_along = 0.0
+        # Allow different racing lines, but require reaching the beginning of the
+        # original trace in its forward direction. Proximity alone could close
+        # the gap before a nearby corner has actually been driven.
+        for index in range(self._track_join_point_count - 1):
+            start, end = original[index:index + 2]
+            dx, dy = end[0] - start[0], end[1] - start[1]
+            length = math.hypot(dx, dy)
+            if length == 0:
+                continue
+            projection = ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length ** 2
+            forward = movement[0] * dx + movement[1] * dy > 0
+            if 0 <= projection <= 1 and forward:
+                separation = math.hypot(point[0] - start[0] - projection * dx, point[1] - start[1] - projection * dy)
+                if separation <= self._TRACK_JOIN_DISTANCE_M:
+                    self._complete_track(prefix + original[index + 1:])
+                    return
+            distance_along += length
+            if distance_along >= self._TRACK_JOIN_PREFIX_M:
+                break
+
+    def _record_track_start(self, event: TelemetryStat) -> None:
+        x, y = _finite(event.x), _finite(event.y)
+        if x is None or y is None:
+            return
+        point = (float(x), float(y))
+        if self._track_prefix_lap is None:
+            self._track_join_point_count = len(self._track_points)
+            # This is also the final measured point of the original partial lap.
+            # Keep it so the merge closes at the line, not across the missing arc.
+            self._track_points.append(point)
+            self._track_prefix_lap = event.current_lap
+        elif event.current_lap != self._track_prefix_lap:
+            if event.current_lap == self._track_prefix_lap + 1 and len(self._track_prefix_points) >= 2:
+                # If racing lines never overlapped near the first point, the
+                # following complete lap supplies a safe full-trace fallback.
+                self._complete_track(self._track_prefix_points + [point])
+                return
+            self._track_prefix_points = []
+            self._track_prefix_lap = event.current_lap
+            self._track_prefix_sample_distance_m = self._TRACK_SAMPLE_DISTANCE_M
+        self._append_track_prefix_point(event)
+        self._join_track_prefix()
 
     def _update_track(self, event: TelemetryStat) -> None:
         active = event.in_race and event.current_lap > 0
@@ -233,7 +317,6 @@ class LiveTelemetryHub:
             # the line. Record this first partial lap, then use the real start of
             # the next lap to prepend only the missing prefix.
             self._track_recording_lap = event.current_lap
-            self._track_first_distance_m = max(0.0, float(event.lap_distance))
 
         previous_lap = self._track_last_lap
         if self._track_recording_lap is None and previous_lap is not None and event.current_lap > previous_lap:
@@ -245,24 +328,7 @@ class LiveTelemetryHub:
                 self._append_track_point(event)
             elif event.current_lap > self._track_recording_lap:
                 if not self._track_ready:
-                    first_distance = self._track_first_distance_m or 0.0
-                    if first_distance <= self._TRACK_SAMPLE_DISTANCE_M:
-                        self._append_track_point(event)
-                        self._track_ready = len(self._track_points) >= 2
-                    else:
-                        self._append_track_prefix_point(event)
-                        if event.lap_distance >= first_distance and len(self._track_prefix_points) >= 2:
-                            # Prefix (line -> green flag) and original trace
-                            # (green flag -> line) are both game measurements.
-                            # Reclose at the line without speculative countdown data.
-                            original = self._track_points
-                            if original and math.hypot(
-                                self._track_prefix_points[-1][0] - original[0][0],
-                                self._track_prefix_points[-1][1] - original[0][1],
-                            ) < self._TRACK_SAMPLE_DISTANCE_M:
-                                original = original[1:]
-                            self._track_points = self._track_prefix_points + original + [self._track_prefix_points[0]]
-                            self._track_ready = len(self._track_points) >= 3
+                    self._record_track_start(event)
                 if previous_lap is not None and event.current_lap > previous_lap:
                     self._finish_track_lap(event.last_lap)
                     self._track_force_snapshot = True

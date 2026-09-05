@@ -1,3 +1,4 @@
+import struct
 import time
 
 import pytest
@@ -51,6 +52,37 @@ def test_live_frame_serializes_browser_facing_units_and_optional_values():
     assert frame.elevation_m == 7.5
 
 
+@pytest.mark.parametrize(
+    ("flags", "raw_boost", "has_turbo"),
+    [
+        (0, 0.0, False),
+        ((1 << 3) | (1 << 5) | (1 << 7) | (1 << 15), 1.5, False),
+        (1 << 4, 0.5, True),
+        (0xFFFF, 2.25, True),
+    ],
+)
+def test_turbo_equipment_flag_and_boost_reach_the_browser(flags, raw_boost, has_turbo):
+    packet = bytearray(296)
+    struct.pack_into("<H", packet, 0x8E, flags)
+    struct.pack_into("<f", packet, 0x50, raw_boost)
+
+    event = TelemetryStat.from_bytes(bytes(packet), None)
+    assert event is not None
+    assert event.has_turbo is has_turbo
+
+    frame = LiveFrame.from_telemetry(event).model_dump(mode="json")
+    assert frame["has_turbo"] is has_turbo
+    # One bar equals one unit on a gauge labelled ×100 kPa.
+    assert frame["boost"] == pytest.approx(raw_boost - 1)
+
+
+def test_historical_telemetry_without_turbo_flag_remains_compatible():
+    frame = LiveFrame.from_telemetry(telemetry(boost=None))
+
+    assert frame.has_turbo is False
+    assert frame.boost is None
+
+
 def test_hub_retains_a_complete_planar_trace_for_new_dashboard_connections():
     hub = LiveTelemetryHub()
     hub.publish(telemetry(current_lap=1, lap_distance=0, x=0, y=0, received_at=100.0))
@@ -79,6 +111,80 @@ def test_hub_completes_the_green_flag_gap_with_the_next_lap_prefix():
     assert snapshot is not None
     assert snapshot[1].track_ready is True
     assert snapshot[1].track_trace == [(0.0, 0.0), (6.0, 0.0), (15.0, 0.0), (0.0, 0.0)]
+
+
+def test_parsed_packets_fill_the_missing_start_even_when_first_distance_is_zero(monkeypatch):
+    monkeypatch.setattr("src.services.live_telemetry.time.monotonic", lambda: 100.0)
+    hub = LiveTelemetryHub()
+    tracker = Tracker(db=object(), live_hub=hub)  # type: ignore[arg-type]
+    tracker.set_recording_enabled(False)
+
+    def publish_packet(lap, x, y):
+        packet = bytearray(296)
+        struct.pack_into("<h", packet, 0x74, lap)
+        struct.pack_into("<H", packet, 0x8E, 1)
+        struct.pack_into("<f", packet, 0x04, x)
+        struct.pack_into("<f", packet, 0x0C, -y)
+        tracker.process_event(bytes(packet))
+        return hub.snapshot()[1]  # type: ignore[index]
+
+    # Parsing begins after the start-line corner, not at the line. The parser
+    # still reports zero because lap_distance is accumulated from received data.
+    publish_packet(1, 20, 20)
+    assert tracker.prev_event is not None and tracker.prev_event.lap_distance == 0
+    publish_packet(1, 30, 20)
+    publish_packet(1, 40, 0)
+
+    assert publish_packet(2, 0, 0).track_ready is False
+    assert publish_packet(2, 0, 10).track_ready is False
+    assert publish_packet(2, 10, 20).track_ready is False
+    # Even a point close to the original start must not close the missing road
+    # while the vehicle is still approaching it.
+    assert publish_packet(2, 15, 20).track_ready is False
+    completed = publish_packet(2, 20, 20)
+
+    assert completed.track_ready is True
+    assert completed.track_trace == [
+        (0.0, 0.0), (0.0, 10.0), (10.0, 20.0), (15.0, 20.0),
+        (20.0, 20.0), (30.0, 20.0), (40.0, 0.0), (0.0, 0.0),
+    ]
+    # Completion bypasses snapshot throttling, even when no monotonic time has
+    # passed since the lap-transition snapshot.
+    assert completed.track_recording_lap == 1
+    assert publish_packet(2, 35, 20).track_trace is None
+    assert hub.snapshot(include_track=True)[1].track_trace == completed.track_trace  # type: ignore[index]
+
+
+def test_track_prefix_can_join_a_different_forward_racing_line():
+    hub = LiveTelemetryHub()
+    hub.publish(telemetry(current_lap=1, lap_distance=0, x=20, y=20))
+    hub.publish(telemetry(current_lap=1, x=30, y=20))
+    hub.publish(telemetry(current_lap=1, x=40, y=0))
+    hub.publish(telemetry(current_lap=2, lap_distance=0, x=0, y=0))
+    hub.publish(telemetry(current_lap=2, x=15, y=24))
+    assert hub.snapshot()[1].track_ready is False  # type: ignore[index]
+
+    hub.publish(telemetry(current_lap=2, x=23, y=24))
+
+    frame = hub.snapshot()[1]  # type: ignore[index]
+    assert frame.track_ready is True
+    assert frame.track_trace == [(0.0, 0.0), (15.0, 24.0), (23.0, 24.0), (30.0, 20.0), (40.0, 0.0), (0.0, 0.0)]
+
+
+def test_track_uses_a_complete_following_lap_if_the_partial_trace_never_matches():
+    hub = LiveTelemetryHub()
+    hub.publish(telemetry(current_lap=1, x=100, y=100))
+    hub.publish(telemetry(current_lap=1, x=110, y=100))
+    following_lap = [(0, 0), (30, 0), (30, 30), (0, 30)]
+    for x, y in following_lap:
+        hub.publish(telemetry(current_lap=2, x=x, y=y))
+        assert hub.snapshot()[1].track_ready is False  # type: ignore[index]
+
+    hub.publish(telemetry(current_lap=3, x=0, y=0))
+
+    frame = hub.snapshot()[1]  # type: ignore[index]
+    assert frame.track_ready is True
+    assert frame.track_trace == following_lap + [(0, 0)]
 
 
 def test_hub_colours_the_persistent_trace_only_after_a_valid_lap_comparison():

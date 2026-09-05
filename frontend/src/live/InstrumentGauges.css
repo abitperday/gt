@@ -1,0 +1,251 @@
+.instrument-fuel {
+  position: relative;
+  flex: none;
+  margin: 14px 0 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #29343d;
+  color: #f3f7fa;
+}
+
+.instrument-fuel__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.instrument-fuel__label {
+  color: #94a6b5;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .13em;
+}
+
+.instrument-fuel__reading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.instrument-fuel__reading strong {
+  font: 700 29px/.9 'Barlow Condensed', sans-serif;
+}
+
+.instrument-fuel__reading strong small {
+  margin-left: 4px;
+  color: #a8b6c1;
+  font: 600 12px Rajdhani, sans-serif;
+}
+
+.instrument-fuel__reading > span {
+  color: #8395a3;
+  font-size: 11px;
+}
+
+.instrument-fuel__dial {
+  display: block;
+  width: 100%;
+  height: 110px;
+  margin-top: 5px;
+  overflow: visible;
+}
+
+.instrument-fuel__arc {
+  fill: none;
+  stroke: #135ba9;
+  stroke-width: 11;
+  filter: drop-shadow(0 0 4px #1473e84d);
+}
+
+.instrument-fuel__edge {
+  fill: none;
+  stroke: #318aff;
+  stroke-width: 1;
+}
+
+.instrument-fuel__tick {
+  stroke: #103c70;
+  stroke-width: 1;
+}
+
+.instrument-fuel__tick--major {
+  stroke: #f5f8fa;
+  stroke-width: 2.4;
+}
+
+.instrument-fuel__end {
+  fill: #f3f7fa;
+  font: 700 17px 'Barlow Condensed', sans-serif;
+  text-anchor: middle;
+}
+
+.instrument-fuel__needle {
+  fill: #ffffff;
+  transform-origin: 100px 89px;
+  transition: transform 180ms linear;
+  filter: drop-shadow(0 0 2px #c1e5ff99);
+}
+
+.instrument-fuel__hub,
+.instrument-turbo__hub {
+  fill: #101a22;
+  stroke: #a2b5c3;
+  stroke-width: 1.1;
+}
+
+.instrument-fuel__pump {
+  color: #e8eff4;
+  transition: color 180ms linear;
+}
+
+.instrument-fuel--reserve .instrument-fuel__pump,
+.instrument-fuel--low .instrument-fuel__pump {
+  color: #ffd04b;
+  filter: drop-shadow(0 0 3px #ffc83d66);
+}
+
+.instrument-fuel--reserve .instrument-fuel__label,
+.instrument-fuel--low .instrument-fuel__label {
+  color: #ffd04b;
+}
+
+.instrument-fuel--unknown .instrument-fuel__arc,
+.instrument-fuel--unknown .instrument-fuel__edge,
+.instrument-fuel--unknown .instrument-fuel__tick {
+  opacity: .35;
+}
+
+.instrument-fuel__unavailable {
+  display: block;
+  color: #7f909c;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: .09em;
+  text-align: center;
+}
+
+.instrument-turbo {
+  display: flex;
+  flex: 1 0 160px;
+  align-items: center;
+  justify-content: center;
+  gap: 5%;
+  min-width: 0;
+  min-height: 160px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #29343d;
+  color: #eaf0f4;
+  container-type: size;
+}
+
+.instrument-turbo__dial {
+  display: block;
+  width: min(75cqw, 100cqh);
+  height: min(75cqw, 100cqh);
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: visible;
+}
+
+.instrument-turbo__arc {
+  fill: none;
+  stroke: #4c5963;
+  stroke-width: 1.5;
+}
+
+.instrument-turbo__positive-arc {
+  fill: none;
+  stroke: #a8b4bd;
+  stroke-width: 1.5;
+}
+
+.instrument-turbo__tick {
+  stroke: #86959f;
+  stroke-width: 1;
+}
+
+.instrument-turbo__tick--major {
+  stroke: #edf2f5;
+  stroke-width: 2.4;
+}
+
+.instrument-turbo__number {
+  fill: #eff4f7;
+  font: 600 17px 'Barlow Condensed', sans-serif;
+  text-anchor: middle;
+}
+
+.instrument-turbo__unit {
+  fill: #99a8b2;
+  font: 600 11px Rajdhani, sans-serif;
+  text-anchor: middle;
+}
+
+.instrument-turbo__icon {
+  color: #d3dce2;
+}
+
+.instrument-turbo__needle {
+  fill: #ffffff;
+  transform: rotate(var(--turbo-angle, var(--turbo-initial-angle, 0deg)));
+  transform-origin: 68px 68px;
+  transition: transform 50ms linear;
+  filter: drop-shadow(0 0 2px #d5e6ef66);
+}
+
+.instrument-turbo__reading {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 3px;
+  min-width: 38px;
+  font-variant-numeric: tabular-nums;
+}
+
+.instrument-turbo__label {
+  color: #eef4f7;
+  font: 700 clamp(16px, 7cqw, 28px)/1 'Barlow Condensed', sans-serif;
+  letter-spacing: .09em;
+}
+
+.instrument-turbo__caption {
+  color: #8394a1;
+  font-size: clamp(8px, 3cqw, 12px);
+  font-weight: 700;
+  letter-spacing: .14em;
+}
+
+.instrument-turbo__reading strong {
+  margin-top: 5px;
+  font: 700 clamp(27px, 12cqw, 48px)/.9 'Barlow Condensed', sans-serif;
+}
+
+.instrument-turbo__reading small {
+  color: #9aabb6;
+  font: 600 clamp(10px, 4cqw, 15px) Rajdhani, sans-serif;
+}
+
+@media (orientation: landscape) and (max-width: 900px) {
+  .instrument-fuel { margin: 7px 0 5px; padding-bottom: 5px; }
+  .instrument-fuel__heading { gap: 4px; }
+  .instrument-fuel__label { font-size: 8px; letter-spacing: .07em; }
+  .instrument-fuel__reading { gap: 4px; }
+  .instrument-fuel__reading strong { font-size: 22px; }
+  .instrument-fuel__reading strong small { margin-left: 2px; font-size: 9px; }
+  .instrument-fuel__reading > span { font-size: 9px; }
+  .instrument-fuel__dial { height: 65px; margin-top: 3px; }
+  .instrument-fuel__unavailable { font-size: 7px; }
+  .instrument-turbo { flex-basis: 100px; min-height: 100px; margin-top: 5px; padding-top: 5px; }
+  .instrument-turbo__reading { min-width: 27px; gap: 2px; }
+  .instrument-turbo__label { font-size: clamp(12px, 7cqw, 20px); }
+  .instrument-turbo__caption { font-size: clamp(6px, 3cqw, 9px); }
+  .instrument-turbo__reading strong { margin-top: 3px; font-size: clamp(21px, 12cqw, 34px); }
+  .instrument-turbo__reading small { font-size: clamp(8px, 4cqw, 12px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .instrument-fuel__needle,
+  .instrument-fuel__pump,
+  .instrument-turbo__needle { transition: none; }
+}

@@ -71,6 +71,7 @@ async def live_telemetry(websocket: WebSocket):
     last_status_sent = 0.0
     current_status = ""
     stale_after_seconds = 1.5
+    sent_track_session: int | None = None
 
     async def send_status(status: str, message: str, *, force: bool = False):
         nonlocal current_status, last_status_sent
@@ -86,8 +87,7 @@ async def live_telemetry(websocket: WebSocket):
         await send_status(
             "waiting", "Waiting for GT7 telemetry from the collector.", force=True
         )
-        # A reconnect gets the server-held map immediately. Later frames stay
-        # latest-only and contain the full geometry only at its snapshot cadence.
+        # A reconnect gets the server-held map immediately.
         initial = hub.snapshot(include_track=True)
         if initial is not None:
             sequence, frame = initial
@@ -102,6 +102,8 @@ async def live_telemetry(websocket: WebSocket):
                 )
                 current_status = "live"
                 last_frame_sent = time.monotonic()
+                if frame.track_ready and frame.track_trace:
+                    sent_track_session = frame.session_id
         while True:
             update = await asyncio.to_thread(hub.wait_for_update, sequence, 0.5)
             snapshot = update or hub.snapshot()
@@ -131,6 +133,15 @@ async def live_telemetry(websocket: WebSocket):
                 if latest is not None:
                     latest_sequence, frame = latest
 
+            # Latest-only coalescing can discard the packet carrying the completed
+            # outline. Recover it once per connection/session, including when it
+            # was replaced during the throttle sleep. Completed geometry is fixed
+            # for the session; subsequent hot frames keep their small payloads.
+            if frame.track_ready and frame.session_id != sent_track_session:
+                complete = hub.snapshot(include_track=True)
+                if complete is not None:
+                    latest_sequence, frame = complete
+
             sequence = latest_sequence
             age_ms = max(0, round((time.time() - frame.captured_at) * 1000))
             await websocket.send_json(
@@ -143,6 +154,10 @@ async def live_telemetry(websocket: WebSocket):
             )
             current_status = "live"
             last_frame_sent = time.monotonic()
+            if not frame.track_ready:
+                sent_track_session = None
+            elif frame.track_trace:
+                sent_track_session = frame.session_id
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:

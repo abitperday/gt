@@ -55,8 +55,10 @@ class TelemetryStat(BaseModel):
     lights_active: bool = False
     high_beams: bool = False
     low_beams: bool = False
+    has_turbo: bool = False
     fuel_current: float | None = None
     fuel_capacity: float | None = None
+    # Gauge pressure in bar, numerically equal to the dashboard's ×100 kPa scale.
     boost: float | None = None
     oil_pressure: float | None = None
     oil_temp: float | None = None
@@ -237,6 +239,7 @@ class TelemetryStat(BaseModel):
         flags = struct.unpack("<H", ddata[0x8E : 0x8E + 2])[0]
         is_paused = bool(flags & 0b10)
         in_race = bool(flags & 0b1)
+        has_turbo = bool(flags & (1 << 4))
         lights_active = bool(flags & (1 << 7))
         high_beams = bool(flags & (1 << 8))
         low_beams = bool(flags & (1 << 9))
@@ -281,6 +284,7 @@ class TelemetryStat(BaseModel):
             lights_active=lights_active,
             high_beams=high_beams,
             low_beams=low_beams,
+            has_turbo=has_turbo,
             fuel_current=current_fuel,
             fuel_capacity=fuel_capacity,
             boost=boost,
